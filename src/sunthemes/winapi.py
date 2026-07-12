@@ -111,7 +111,9 @@ def autostart_command() -> str:
         return f'"{Path(shim).resolve()}" --tray'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.exists() else Path(sys.executable)
-    return f'"{exe}" "{argv0}" --tray'
+    # Запуск скрипта напрямую (argv0) ломает относительные импорты пакета —
+    # используем `-m sunthemes`, как при штатном запуске `python -m sunthemes`.
+    return f'"{exe}" -m sunthemes --tray'
 
 
 def is_autostart_enabled() -> bool:

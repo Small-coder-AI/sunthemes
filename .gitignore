@@ -18,3 +18,4 @@ dist/
 
 # Внутренняя кухня: спеки и планы не публикуем
 docs/superpowers/
+.superpowers/
