@@ -1,5 +1,7 @@
 """Тесты конфига и пресетов городов."""
 import json
+import logging
+import logging.handlers
 
 from sunthemes import config, i18n
 
@@ -38,3 +40,25 @@ def test_save_and_load_roundtrip(tmp_path, monkeypatch):
     cfg = dict(config.DEFAULT_CONFIG, lat=51.5)
     config.save_config(cfg)
     assert config.load_config()["lat"] == 51.5
+
+
+def test_setup_logging_rotates(tmp_path, monkeypatch):
+    """Лог должен ротироваться по размеру, а не расти бесконечно."""
+    log_file = tmp_path / "t.log"
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(config, "LOG_PATH", log_file)
+    monkeypatch.setattr(config, "LOG_MAX_BYTES", 200)
+    handler = config.setup_logging()
+    try:
+        assert isinstance(handler, logging.handlers.RotatingFileHandler)
+        assert handler.maxBytes == 200
+        assert handler.backupCount == config.LOG_BACKUPS
+        logger = logging.getLogger("sunthemes")
+        for _ in range(30):
+            logger.info("x" * 40)
+        assert log_file.exists()
+        # при 30 записях по ~40 байт и лимите 200 байт бэкап обязан появиться
+        assert (tmp_path / "t.log.1").exists()
+    finally:
+        logging.getLogger().removeHandler(handler)
+        handler.close()
