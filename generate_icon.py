@@ -2,7 +2,7 @@
 from PIL import Image, ImageDraw
 from pathlib import Path
 
-OUT = Path(__file__).parent / "icon.ico"
+OUT = Path(__file__).parent / "src" / "sunthemes" / "icon.ico"
 SIZE = 256
 img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
 d = ImageDraw.Draw(img)
