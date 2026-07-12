@@ -1,6 +1,6 @@
 [project]
 name = "sunthemes"
-version = "1.0.0"
+version = "1.0.1"
 description = "Automatic Windows light/dark theme switching by sunrise, sunset and real daylight"
 readme = "README.md"
 requires-python = ">=3.10"

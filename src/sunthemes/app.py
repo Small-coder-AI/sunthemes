@@ -55,14 +55,16 @@ class PowerEventFilter(QAbstractNativeEventFilter):
         return False
 
 
+def _log_unhandled(exc_type, exc, tb):
+    """Неперехваченное исключение — в лог, затем стандартная печать.
+    Иначе падение оставляет пустой лог и его не отладить post-mortem."""
+    log.critical("Unhandled exception", exc_info=(exc_type, exc, tb))
+    sys.__excepthook__(exc_type, exc, tb)
+
+
 def main() -> None:
-    config.APP_DIR.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=config.LOG_PATH,
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        encoding="utf-8",
-    )
+    config.setup_logging()
+    sys.excepthook = _log_unhandled
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -103,6 +105,7 @@ def main() -> None:
 
     log.info("Sunthemes started (tray=%s)", tray_mode)
     exit_code = app.exec()
+    log.info("Sunthemes exited (code=%s)", exit_code)
     winapi.close_handle(mutex)
     sys.exit(exit_code)
 
