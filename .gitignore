@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Сборка PyInstaller (legacy) и пакетов
+build/
+dist/
+
+# Тесты и инструменты
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Внутренняя кухня: спеки и планы не публикуем
+docs/superpowers/
