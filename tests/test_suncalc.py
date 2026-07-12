@@ -85,6 +85,46 @@ def test_effective_sun_times_clamps_to_max_offset():
     assert eff_sr == sunrise + timedelta(minutes=30)
 
 
+# --- sun-режим с погодным кешем (сквозной путь determine_target_theme) ---
+
+def test_sun_mode_with_weather_cache_delays_light_theme(monkeypatch):
+    """Хмурое утро: радиация переходит порог в 07:30, позже
+    астрономического восхода (~04:00) — в 06:00 тема ещё тёмная,
+    хотя по чистой астрономии была бы светлой."""
+    p = suncalc.WeatherProvider()
+    rads = [0] * 8 + [100] * 9 + [0] * 7
+    p._cache = (suncalc._now(), 55.7558, 37.6173,
+                _fake_forecast("2026-07-12", rads))
+    monkeypatch.setattr(suncalc, "weather", p)
+
+    cfg = make_cfg(mode="sun", use_clouds=True, clouds_max_offset_min=600)
+    at_6am = datetime(2026, 7, 12, 6, 0, tzinfo=MSK)
+    assert suncalc.determine_target_theme(cfg, at_6am) == "dark"
+    # без учёта погоды в тот же момент — светлая
+    assert suncalc.determine_target_theme(make_cfg(mode="sun"), at_6am) == "light"
+
+
+def test_sun_mode_weather_clamped_by_max_offset(monkeypatch):
+    """Тот же хмурый прогноз, но предел отклонения 30 минут: сдвиг
+    обрезается до восход+30, и в 06:00 уже светло."""
+    p = suncalc.WeatherProvider()
+    rads = [0] * 8 + [100] * 9 + [0] * 7
+    p._cache = (suncalc._now(), 55.7558, 37.6173,
+                _fake_forecast("2026-07-12", rads))
+    monkeypatch.setattr(suncalc, "weather", p)
+
+    cfg = make_cfg(mode="sun", use_clouds=True, clouds_max_offset_min=30)
+    assert suncalc.determine_target_theme(
+        cfg, datetime(2026, 7, 12, 6, 0, tzinfo=MSK)) == "light"
+
+
+def test_sun_mode_empty_weather_cache_falls_back_to_astronomy(monkeypatch):
+    monkeypatch.setattr(suncalc, "weather", suncalc.WeatherProvider())
+    cfg = make_cfg(mode="sun", use_clouds=True)
+    assert suncalc.determine_target_theme(
+        cfg, datetime(2026, 7, 12, 13, 0, tzinfo=MSK)) == "light"
+
+
 # --- negative-cache и приватность ---
 
 def test_failed_fetch_backs_off_five_minutes(monkeypatch):

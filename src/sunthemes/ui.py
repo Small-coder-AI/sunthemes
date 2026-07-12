@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         self._set_theme = theme_setter
         self.cfg = config.load_config()
         self.setWindowTitle(APP_DISPLAY_NAME)
-        self.setFixedSize(500, 680)
+        self.setFixedSize(500, 710)
         self.setWindowIcon(make_app_icon())
 
         self._build_ui()
@@ -293,6 +293,9 @@ class MainWindow(QMainWindow):
         self.autostart_cb = QCheckBox(tr("autostart"))
         root.addWidget(self.autostart_cb)
 
+        self.desktop_lnk_cb = QCheckBox(tr("desktop_shortcut"))
+        root.addWidget(self.desktop_lnk_cb)
+
         # Кнопки
         bl = QHBoxLayout()
         bl.setSpacing(8)
@@ -364,6 +367,11 @@ class MainWindow(QMainWindow):
 
         self.clouds_cb.setChecked(bool(self.cfg.get("use_clouds", False)))
         self.autostart_cb.setChecked(winapi.is_autostart_enabled())
+        # Состояние чекбокса — это факт существования файла ярлыка.
+        try:
+            self.desktop_lnk_cb.setChecked(winapi.desktop_shortcut_path().exists())
+        except OSError:
+            self.desktop_lnk_cb.setEnabled(False)
 
         self._on_mode_changed()
         self._on_city_changed()
@@ -457,10 +465,23 @@ class MainWindow(QMainWindow):
             return
         config.save_config(self.cfg)
         winapi.set_autostart(self.autostart_cb.isChecked())
+        self._apply_desktop_shortcut(self.desktop_lnk_cb.isChecked())
         self.tick()
         self._update_sun_info()
         self.tray.showMessage(APP_DISPLAY_NAME, tr("tray.saved"),
                               QSystemTrayIcon.MessageIcon.Information, 2000)
+
+    def _apply_desktop_shortcut(self, want: bool) -> None:
+        """Создать или удалить ярлык на рабочем столе по чекбоксу."""
+        try:
+            lnk = winapi.desktop_shortcut_path()
+            if want:
+                winapi.create_app_shortcut(
+                    lnk, config.ensure_app_icon(), tr("shortcut.description"))
+            else:
+                lnk.unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("Desktop shortcut: %s", e)
 
     def _manual_set(self, theme: str):
         self._set_theme(theme)
@@ -494,7 +515,9 @@ class MainWindow(QMainWindow):
                     self.cfg["lat"], self.cfg["lon"], self.cfg["tz"])
             target = suncalc.determine_target_theme(self.cfg)
             current = winapi.get_current_theme()
-            if target != current:
+            # Форс и при рассинхроне флагов (остаток сбоя прошлой смены):
+            # полная поэтапная запись выравнивает оба.
+            if target != current or not winapi.theme_flags_in_sync():
                 self._set_theme(target)
             self._update_status(target)
             self._update_sun_info()

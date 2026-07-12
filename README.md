@@ -20,6 +20,8 @@ you to dark mode before the astronomical sunset.
   after wake-from-sleep.
 - Manual ☀ / 🌙 override buttons.
 - Autostart with Windows (minimized to tray).
+- Start Menu shortcut is created on first run; desktop shortcut is
+  an opt-in checkbox in settings.
 - UI in English or Russian (follows the Windows display language).
 - Single instance guard, timezone-aware calculations.
 

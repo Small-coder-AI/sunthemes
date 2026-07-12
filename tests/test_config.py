@@ -42,6 +42,51 @@ def test_save_and_load_roundtrip(tmp_path, monkeypatch):
     assert config.load_config()["lat"] == 51.5
 
 
+def test_load_config_resets_broken_values(tmp_path, monkeypatch):
+    """Руками испорченный config.json не должен ронять приложение:
+    каждое битое поле откатывается на дефолт независимо."""
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({
+        "mode": "banana",
+        "lat": "not-a-number",
+        "lon": 999,
+        "tz": "Mars/Olympus",
+        "light_time": "25:99",
+        "dark_time": 1900,
+        "offset_min": True,          # bool — не число
+        "use_clouds": "yes",
+        "clouds_max_offset_min": -5,
+    }), encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    cfg = config.load_config()
+    for key in ("mode", "lat", "lon", "tz", "light_time", "dark_time",
+                "offset_min", "use_clouds", "clouds_max_offset_min"):
+        assert cfg[key] == config.DEFAULT_CONFIG[key], key
+
+
+def test_load_config_keeps_valid_and_unknown_values(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps(
+        {"mode": "time", "lat": 51.5, "someday_key": 1}), encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    cfg = config.load_config()
+    assert cfg["mode"] == "time"
+    assert cfg["lat"] == 51.5
+    assert cfg["someday_key"] == 1   # незнакомые ключи не выбрасываются
+
+
+def test_ensure_app_icon_copies_and_is_idempotent(tmp_path, monkeypatch):
+    icon = tmp_path / "icon.ico"
+    monkeypatch.setattr(config, "APP_DIR", tmp_path)
+    monkeypatch.setattr(config, "ICON_PATH", icon)
+    p1 = config.ensure_app_icon()
+    assert p1 == icon and icon.exists() and icon.stat().st_size > 0
+    mtime = icon.stat().st_mtime_ns
+    p2 = config.ensure_app_icon()   # повторный вызов не перезаписывает
+    assert p2 == icon
+    assert icon.stat().st_mtime_ns == mtime
+
+
 def test_setup_logging_rotates(tmp_path, monkeypatch):
     """Лог должен ротироваться по размеру, а не расти бесконечно."""
     log_file = tmp_path / "t.log"
