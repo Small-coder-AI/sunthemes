@@ -58,6 +58,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "ru": "Запускать при старте Windows (свёрнутым в трей)",
         "en": "Start with Windows (minimized to tray)",
     },
+    "desktop_shortcut": {
+        "ru": "Ярлык на рабочем столе",
+        "en": "Desktop shortcut",
+    },
+    "shortcut.description": {
+        "ru": "Sunthemes — автосмена темы Windows по солнцу",
+        "en": "Sunthemes — automatic Windows theme switching by the sun",
+    },
     "btn.apply": {"ru": "Сохранить и применить", "en": "Save and apply"},
     "btn.light_tip": {"ru": "Включить светлую тему вручную", "en": "Switch to light theme manually"},
     "btn.dark_tip": {"ru": "Включить тёмную тему вручную", "en": "Switch to dark theme manually"},

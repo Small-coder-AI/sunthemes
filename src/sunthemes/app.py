@@ -55,6 +55,24 @@ class PowerEventFilter(QAbstractNativeEventFilter):
         return False
 
 
+def _ensure_start_menu_shortcut() -> None:
+    """Ярлык в меню «Пуск»: существующий обновляем (чинит протухший путь
+    после обновления пакета), отсутствующий создаём только один раз —
+    удалённый пользователем ярлык не навязываем повторно."""
+    try:
+        icon = config.ensure_app_icon()
+        lnk = winapi.start_menu_shortcut_path()
+        cfg = config.load_config()
+        seeded = cfg.get("start_menu_shortcut_seeded", False)
+        if lnk.exists() or not seeded:
+            winapi.create_app_shortcut(lnk, icon, i18n.tr("shortcut.description"))
+        if not seeded:
+            cfg["start_menu_shortcut_seeded"] = True
+            config.save_config(cfg)
+    except Exception as e:
+        log.warning("Start Menu shortcut: %s", e)
+
+
 def _log_unhandled(exc_type, exc, tb):
     """Неперехваченное исключение — в лог, затем стандартная печать.
     Иначе падение оставляет пустой лог и его не отладить post-mortem."""
@@ -72,6 +90,7 @@ def main() -> None:
     app.setWindowIcon(ui.make_app_icon())
 
     i18n.set_language(winapi.get_ui_language())
+    _ensure_start_menu_shortcut()
 
     # Современный стиль + Fluent-палитра; перерисовка при смене темы ОС.
     app.setStyle("Fusion")

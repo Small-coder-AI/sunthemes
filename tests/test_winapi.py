@@ -25,3 +25,29 @@ def test_autostart_command_dev_fallback_uses_pythonw_or_python(monkeypatch, tmp_
 
 def test_get_ui_language_returns_supported_code():
     assert winapi.get_ui_language() in ("ru", "en")
+
+
+def test_launcher_agrees_with_autostart_command(monkeypatch, tmp_path):
+    shim = tmp_path / "sunthemes.exe"
+    shim.write_bytes(b"")
+    monkeypatch.setattr(sys, "argv", [str(shim)])
+    exe, args = winapi.launcher()
+    assert exe == str(shim.resolve())
+    assert args == ""
+
+
+def test_known_folders_exist():
+    assert winapi.known_folder_path(winapi.FOLDERID_DESKTOP).is_dir()
+    assert winapi.known_folder_path(winapi.FOLDERID_PROGRAMS).is_dir()
+
+
+def test_create_shortcut_writes_lnk(tmp_path):
+    lnk = tmp_path / "test.lnk"
+    winapi.create_shortcut(lnk, sys.executable, "-m sunthemes", None, "test")
+    assert lnk.exists()
+    assert lnk.stat().st_size > 0
+
+
+def test_theme_flags_in_sync_returns_bool():
+    # Реестр не трогаем — только чтение; оба исхода валидны.
+    assert winapi.theme_flags_in_sync() in (True, False)
