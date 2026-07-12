@@ -103,6 +103,29 @@ def test_failed_fetch_backs_off_five_minutes(monkeypatch):
     assert p.needs_refresh(55.8, 37.6) is True       # 5 минут прошло
 
 
+def test_successful_cache_expires_after_30_minutes(monkeypatch):
+    p = suncalc.WeatherProvider()
+    base = suncalc._now()
+    monkeypatch.setattr(suncalc, "_now", lambda: base)
+
+    class FakeResponse:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return b'{"current": {"cloud_cover": 0}, "hourly": {"time": [], "shortwave_radiation": []}}'
+
+    monkeypatch.setattr(suncalc, "urlopen", lambda url, timeout: FakeResponse())
+    p._refresh_worker(55.8, 37.6, "Europe/Moscow")   # успешная загрузка → кеш
+    assert p.cached_data(55.8, 37.6) is not None
+
+    almost = base + timedelta(minutes=29)
+    monkeypatch.setattr(suncalc, "_now", lambda: almost)
+    assert p.needs_refresh(55.8, 37.6) is False      # TTL ещё не истёк
+
+    later = base + timedelta(minutes=31)
+    monkeypatch.setattr(suncalc, "_now", lambda: later)
+    assert p.needs_refresh(55.8, 37.6) is True       # 30 минут прошло
+
+
 def test_fetch_url_rounds_coordinates(monkeypatch):
     p = suncalc.WeatherProvider()
     seen = {}
