@@ -17,7 +17,9 @@ def test_autostart_command_dev_fallback_uses_pythonw_or_python(monkeypatch, tmp_
     monkeypatch.setattr(sys, "argv", [str(script)])
     monkeypatch.setattr(winapi.shutil, "which", lambda name: None)
     cmd = winapi.autostart_command()
-    assert cmd.endswith(f' "{script.resolve()}" --tray')
+    # Фолбэк использует `-m sunthemes`, а не путь к скрипту (argv[0] — это
+    # __main__.py при `python -m sunthemes`, и прямой запуск ломает импорты).
+    assert cmd.endswith(' -m sunthemes --tray')
     assert "python" in cmd.lower()
 
 

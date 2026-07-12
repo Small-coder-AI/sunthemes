@@ -14,7 +14,6 @@ import json
 import logging
 import threading
 from datetime import datetime, time, timedelta
-from urllib.error import URLError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
@@ -125,7 +124,7 @@ class WeatherProvider:
                 self._cache = (_now(), lat, lon, data)
                 self._failed_at = None
             log.info("Open-Meteo: forecast received for (%.1f, %.1f)", lat, lon)
-        except (URLError, OSError, ValueError, KeyError) as e:
+        except Exception as e:
             with self._lock:
                 self._failed_at = _now()
             log.warning("Open-Meteo unavailable: %s", e)

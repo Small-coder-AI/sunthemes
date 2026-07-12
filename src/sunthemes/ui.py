@@ -152,10 +152,8 @@ def apply_app_theme(app) -> None:
 def make_app_icon() -> QIcon:
     """icon.ico из ресурсов пакета; при отсутствии — рисованный запасной."""
     ico = importlib.resources.files("sunthemes") / "icon.ico"
-    try:
+    if ico.is_file():
         return QIcon(str(ico))
-    except OSError:
-        pass
     pix = QPixmap(64, 64)
     pix.fill(Qt.GlobalColor.transparent)
     p = QPainter(pix)
