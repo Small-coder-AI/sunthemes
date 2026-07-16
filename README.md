@@ -35,6 +35,20 @@ you to dark mode before the astronomical sunset.
 
 ## Install
 
+### Regular install (recommended)
+
+1. Open the [releases page](https://github.com/Small-coder-AI/sunthemes/releases)
+   and download `SunthemesSetup.exe`.
+2. Run it. On first launch Windows SmartScreen may warn "Windows protected
+   your PC" — click **"More info" → "Run anyway"**. The app is not signed with
+   a paid certificate, but the source is open.
+3. In the wizard, keep **"Desktop shortcut"** and **"Start with Windows"**
+   checked and install — no admin rights required.
+
+The app lives in the system tray near the clock: ☀ / 🌙 buttons and settings.
+
+### For developers (via uv)
+
 Requires Windows 10/11. With [uv](https://docs.astral.sh/uv/)
 (installs Python automatically if needed):
 
@@ -43,8 +57,9 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 uv tool install git+https://github.com/Small-coder-AI/sunthemes
 ```
 
-Then run `sunthemes` (a console-free shim is placed on your PATH),
-tick **Start with Windows** in the window, press **Save and apply** — done.
+Then run `sunthemes` in a **new** terminal window (PATH only updates in a new
+window). No console window opens — it goes to the tray and creates Start Menu
+and Desktop shortcuts.
 
 Update later with:
 
