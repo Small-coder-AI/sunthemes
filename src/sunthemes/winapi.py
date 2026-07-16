@@ -157,6 +157,16 @@ def set_autostart(enabled: bool) -> None:
                 pass
 
 
+def set_app_user_model_id(app_id: str = "Sunthemes") -> None:
+    """Свой AppUserModelID: Windows берёт иконку окна для панели задач,
+    а не иконку python-хоста. Вызывать до создания окон. На системах без
+    функции (или при повторном вызове) — тихо игнорируем."""
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except (AttributeError, OSError) as e:
+        log.warning("AppUserModelID: %s", e)
+
+
 # --- язык системы ---
 
 def get_ui_language() -> str:

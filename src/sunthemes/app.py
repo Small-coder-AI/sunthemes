@@ -55,22 +55,30 @@ class PowerEventFilter(QAbstractNativeEventFilter):
         return False
 
 
-def _ensure_start_menu_shortcut() -> None:
-    """Ярлык в меню «Пуск»: существующий обновляем (чинит протухший путь
-    после обновления пакета), отсутствующий создаём только один раз —
-    удалённый пользователем ярлык не навязываем повторно."""
+def _ensure_shortcuts() -> None:
+    """Ярлыки в «Пуске» и на рабочем столе: существующий обновляем (чинит
+    протухший путь после обновления пакета), отсутствующий создаём только
+    один раз — удалённый пользователем ярлык не навязываем повторно."""
     try:
         icon = config.ensure_app_icon()
-        lnk = winapi.start_menu_shortcut_path()
+        desc = i18n.tr("shortcut.description")
         cfg = config.load_config()
-        seeded = cfg.get("start_menu_shortcut_seeded", False)
-        if lnk.exists() or not seeded:
-            winapi.create_app_shortcut(lnk, icon, i18n.tr("shortcut.description"))
-        if not seeded:
-            cfg["start_menu_shortcut_seeded"] = True
+        targets = (
+            (winapi.start_menu_shortcut_path(), "start_menu_shortcut_seeded"),
+            (winapi.desktop_shortcut_path(), "desktop_shortcut_seeded"),
+        )
+        dirty = False
+        for lnk, seeded_key in targets:
+            seeded = cfg.get(seeded_key, False)
+            if lnk.exists() or not seeded:
+                winapi.create_app_shortcut(lnk, icon, desc)
+            if not seeded:
+                cfg[seeded_key] = True
+                dirty = True
+        if dirty:
             config.save_config(cfg)
     except Exception as e:
-        log.warning("Start Menu shortcut: %s", e)
+        log.warning("Shortcut seeding: %s", e)
 
 
 def _log_unhandled(exc_type, exc, tb):
@@ -83,6 +91,7 @@ def _log_unhandled(exc_type, exc, tb):
 def main() -> None:
     config.setup_logging()
     sys.excepthook = _log_unhandled
+    winapi.set_app_user_model_id()
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -90,7 +99,7 @@ def main() -> None:
     app.setWindowIcon(ui.make_app_icon())
 
     i18n.set_language(winapi.get_ui_language())
-    _ensure_start_menu_shortcut()
+    _ensure_shortcuts()
 
     # Современный стиль + Fluent-палитра; перерисовка при смене темы ОС.
     app.setStyle("Fusion")
