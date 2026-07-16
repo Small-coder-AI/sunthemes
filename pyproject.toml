@@ -22,7 +22,7 @@ sunthemes = "sunthemes.app:main"
 
 [dependency-groups]
 # pillow — только для generate_icon.py (перегенерация иконки)
-dev = ["pytest>=8", "pillow>=10"]
+dev = ["pytest>=8", "pillow>=10", "pyinstaller>=6"]
 
 [build-system]
 requires = ["hatchling>=1.26"]
