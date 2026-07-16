@@ -74,6 +74,9 @@ DEFAULT_CONFIG: dict = {
     # Ярлык в меню «Пуск» создаётся один раз; если пользователь удалил его —
     # не навязываем повторно (маркер «уже создавали»).
     "start_menu_shortcut_seeded": False,
+    # Ярлык на рабочем столе создаётся один раз при первом запуске; удалённый
+    # пользователем не навязываем повторно (маркер «уже создавали»).
+    "desktop_shortcut_seeded": False,
 }
 
 
@@ -110,7 +113,8 @@ def _validated(cfg: dict) -> dict:
         v = out.get(key)
         if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
             reset(key, f"must be an integer in [{lo}, {hi}]")
-    for key in ("use_clouds", "start_menu_shortcut_seeded"):
+    for key in ("use_clouds", "start_menu_shortcut_seeded",
+                "desktop_shortcut_seeded"):
         if not isinstance(out.get(key), bool):
             reset(key, "must be true/false")
     return out

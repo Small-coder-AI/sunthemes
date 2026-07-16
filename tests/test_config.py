@@ -107,3 +107,16 @@ def test_setup_logging_rotates(tmp_path, monkeypatch):
     finally:
         logging.getLogger().removeHandler(handler)
         handler.close()
+
+
+def test_default_config_has_desktop_shortcut_seeded():
+    assert config.DEFAULT_CONFIG["desktop_shortcut_seeded"] is False
+
+
+def test_load_config_resets_bad_desktop_shortcut_seeded(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({"desktop_shortcut_seeded": "yes"}),
+                        encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    cfg = config.load_config()
+    assert cfg["desktop_shortcut_seeded"] is False

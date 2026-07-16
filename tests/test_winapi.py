@@ -51,3 +51,20 @@ def test_create_shortcut_writes_lnk(tmp_path):
 def test_theme_flags_in_sync_returns_bool():
     # Реестр не трогаем — только чтение; оба исхода валидны.
     assert winapi.theme_flags_in_sync() in (True, False)
+
+
+def test_set_app_user_model_id_applies():
+    """AUMID реально выставляется в процессе — иначе панель задач берёт
+    иконку python-хоста (SetCurrentProcessExplicitAppUserModelID зовётся
+    один раз на процесс, в тестовом процессе это первый вызов)."""
+    import ctypes
+
+    winapi.set_app_user_model_id("Sunthemes.PytestCheck")
+    out = ctypes.c_wchar_p()
+    hr = ctypes.windll.shell32.GetCurrentProcessExplicitAppUserModelID(
+        ctypes.byref(out))
+    assert hr == 0
+    try:
+        assert out.value == "Sunthemes.PytestCheck"
+    finally:
+        ctypes.windll.ole32.CoTaskMemFree(out)
