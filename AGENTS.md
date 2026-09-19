@@ -1,4 +1,4 @@
-# CLAUDE.md — sunthemes
+# AGENTS.md — sunthemes
 
 Windows-утилита автопереключения светлой/тёмной темы по солнцу (трей, PySide6).
 Публичный репозиторий: https://github.com/Small-coder-AI/sunthemes (MIT).
