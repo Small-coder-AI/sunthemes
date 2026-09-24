@@ -4,7 +4,7 @@
 ; Output:   dist\installer\SunthemesSetup.exe
 
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "1.3.0"
 #endif
 #define AppName "Sunthemes"
 #define AppExe "Sunthemes.exe"
