@@ -9,7 +9,9 @@ from PySide6.QtCore import QAbstractNativeEventFilter, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
-from . import config, i18n, ui, winapi
+from . import __version__, config, i18n, ui, winapi
+from .scheduler import ThemeScheduler
+from .weather import WeatherProvider
 
 log = logging.getLogger("sunthemes")
 
@@ -97,19 +99,11 @@ def main() -> None:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName(ui.APP_DISPLAY_NAME)
     app.setWindowIcon(ui.make_app_icon())
-
     i18n.set_language(winapi.get_ui_language())
-    _ensure_shortcuts()
-
-    # Современный стиль + Fluent-палитра; перерисовка при смене темы ОС.
-    app.setStyle("Fusion")
-    app.setFont(QFont("Segoe UI Variable", 10))
-    ui.apply_app_theme(app)
-    app.styleHints().colorSchemeChanged.connect(lambda _s: ui.apply_app_theme(app))
-
     tray_mode = "--tray" in sys.argv
 
-    # Singleton: второй экземпляр конкурировал бы за переключение темы.
+    # Singleton — до любых побочных эффектов: второй экземпляр конкурировал
+    # бы за переключение темы и за ярлыки.
     mutex = winapi.acquire_singleton_mutex()
     if mutex is None:
         log.info("Sunthemes is already running — exiting")
@@ -122,16 +116,30 @@ def main() -> None:
         QMessageBox.critical(None, i18n.tr("err.title"), i18n.tr("err.no_tray"))
         sys.exit(1)
 
-    win = ui.MainWindow(theme_setter=switch_theme_staged)
+    _ensure_shortcuts()
+
+    # Современный стиль + Fluent-палитра; перерисовка при смене темы ОС.
+    app.setStyle("Fusion")
+    app.setFont(QFont("Segoe UI Variable", 10))
+    ui.apply_app_theme(app)
+    app.styleHints().colorSchemeChanged.connect(lambda _s: ui.apply_app_theme(app))
+
+    weather = WeatherProvider()
+    win = ui.MainWindow(ThemeScheduler(weather), theme_setter=switch_theme_staged)
+    # Погода грузится в фоновом потоке; сигнал переносит обработку в GUI-поток.
+    weather.on_update = win.weather_updated.emit
 
     power_filter = PowerEventFilter(on_resume=win.tick)
     app.installNativeEventFilter(power_filter)
+    # WM_POWERBROADCAST рассылается top-level окнам, в том числе скрытым, но
+    # в режиме трея окно ни разу не показывается и HWND у него нет — создаём.
+    win.winId()
 
     if not tray_mode:
         win.show()
     win.start_ticking(TRAY_STARTUP_DELAY_MS if tray_mode else 0)
 
-    log.info("Sunthemes started (tray=%s)", tray_mode)
+    log.info("Sunthemes %s started (tray=%s)", __version__, tray_mode)
     exit_code = app.exec()
     log.info("Sunthemes exited (code=%s)", exit_code)
     winapi.close_handle(mutex)

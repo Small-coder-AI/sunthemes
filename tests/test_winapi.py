@@ -1,7 +1,11 @@
 """Тесты winapi: только чистые части (формирование команды, язык)."""
 import sys
 
-from sunthemes import winapi
+import pytest
+
+pytest.importorskip("winreg", reason="Windows-only module")
+
+from sunthemes import winapi  # noqa: E402
 
 
 def test_autostart_command_uses_running_exe(monkeypatch, tmp_path):

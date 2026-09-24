@@ -1,52 +1,137 @@
-"""Окно настроек, трей и QSS-темы (Fluent-стиль под Win11)."""
+"""Окно настроек, трей и QSS-темы (Fluent-стиль под Win11).
 
+Решения «какая тема и когда» принимает scheduler; тема Windows пишется
+ТОЛЬКО через инжектированный theme_setter (поэтапный сеттер из app.py).
+"""
+
+import html
 import importlib.resources
 import logging
+import time as _time
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QTime, QTimer, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QPointF, QTime, QTimer, Qt, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QSpinBox,
-    QSystemTrayIcon, QTimeEdit, QVBoxLayout, QWidget,
+    QLineEdit, QMenu, QMessageBox, QPushButton, QSpinBox, QSystemTrayIcon,
+    QTimeEdit, QVBoxLayout, QWidget,
 )
 
-from . import config, suncalc, winapi
+from . import config, winapi
 from .i18n import tr
+from .scheduler import DARK, LIGHT, Status, SunPreview
 
 log = logging.getLogger("sunthemes")
 
 APP_DISPLAY_NAME = "Sunthemes"
+WINDOW_WIDTH = 520
+TICK_MS = 60_000
+# После смены темы флаги дописываются поэтапно (~1.2 с): автоматическая
+# проверка в это окно увидела бы «рассинхрон» и начала бы смену заново.
+# Ручные кнопки это ожидание не касается.
+SETTLE_SEC = 3.0
 
 
 # ---------------------------------------------------------------------------
 # Тема UI (светлая/тёмная палитра)
 # ---------------------------------------------------------------------------
 
-def _qss(is_dark: bool) -> str:
-    """Таблица стилей под светлую или тёмную палитру Win11."""
-    if is_dark:
-        bg, surface, surf_hover = "#202020", "#2c2c2c", "#383838"
-        border, border_strong = "#454545", "#5a5a5a"
-        text, text_dim = "#f0f0f0", "#9a9a9a"
-        accent, accent_text = "#4cc2ff", "#000000"
-    else:
-        bg, surface, surf_hover = "#f3f3f3", "#ffffff", "#f5f5f5"
-        border, border_strong = "#cccccc", "#a8a8a8"
-        text, text_dim = "#1a1a1a", "#5a5a5a"
-        accent, accent_text = "#0067c0", "#ffffff"
+_PALETTES = {
+    True: {   # тёмная
+        "bg": "#202020", "surface": "#2c2c2c", "surf_hover": "#383838",
+        "border": "#454545", "border_strong": "#5a5a5a",
+        "text": "#f0f0f0", "text_dim": "#9a9a9a",
+        "accent": "#4cc2ff", "accent_text": "#000000",
+    },
+    False: {  # светлая
+        "bg": "#f3f3f3", "surface": "#ffffff", "surf_hover": "#f5f5f5",
+        "border": "#cccccc", "border_strong": "#a8a8a8",
+        "text": "#1a1a1a", "text_dim": "#5a5a5a",
+        "accent": "#0067c0", "accent_text": "#ffffff",
+    },
+}
 
+
+def _is_dark() -> bool:
+    app = QApplication.instance()
+    return app is not None and app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+
+# Версия в имени файла — чтобы изменённый рисунок не прятался за старым кешем.
+_ARROW_POINTS = {
+    "up": ((3, 11), (8, 5), (13, 11)),
+    "down": ((3, 5), (8, 11), (13, 5)),
+}
+
+
+def _arrow_images(color: str) -> dict[str, str] | None:
+    """Стрелки для спинбоксов: QSS берёт картинки только из файлов, поэтому
+    они рисуются в каталог приложения. PNG, а не SVG: поддержка PNG встроена
+    в Qt, а SVG требует плагина, которого может не оказаться в exe-сборке.
+    None — не вышло (останутся стрелки по умолчанию)."""
+    folder = config.APP_DIR / "ui"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        images = {}
+        for name, points in _ARROW_POINTS.items():
+            file = folder / f"arrow_{name}_{color.lstrip('#')}_v1.png"
+            if not file.exists():
+                # 16×16 при показе 8×8 — чёткие стрелки и на 200 % масштаба.
+                pix = QPixmap(16, 16)
+                pix.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(pix)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                pen = QPen(QColor(color), 2.4)
+                pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+                painter.drawPolyline([QPointF(x, y) for x, y in points])
+                painter.end()
+                if not pix.save(str(file), "PNG"):
+                    raise OSError(f"cannot save {file}")
+            images[name] = file.as_posix()
+        return images
+    except OSError as e:
+        log.warning("Cannot write spinbox arrows: %s", e)
+        return None
+
+
+def _spin_arrows_qss(images: dict[str, str] | None) -> str:
+    if not images:
+        return ""
     return f"""
+        QSpinBox::up-button, QTimeEdit::up-button,
+        QSpinBox::down-button, QTimeEdit::down-button {{
+            subcontrol-origin: border;
+            width: 22px;
+            border: none;
+            background: transparent;
+        }}
+        QSpinBox::up-button, QTimeEdit::up-button {{ subcontrol-position: top right; }}
+        QSpinBox::down-button, QTimeEdit::down-button {{ subcontrol-position: bottom right; }}
+        QSpinBox::up-arrow, QTimeEdit::up-arrow {{
+            image: url("{images['up']}"); width: 8px; height: 8px;
+        }}
+        QSpinBox::down-arrow, QTimeEdit::down-arrow {{
+            image: url("{images['down']}"); width: 8px; height: 8px;
+        }}
+    """
+
+
+def _qss(is_dark: bool, arrows: dict[str, str] | None = None) -> str:
+    """Таблица стилей под светлую или тёмную палитру Win11."""
+    c = _PALETTES[is_dark]
+    return _spin_arrows_qss(arrows) + f"""
         QWidget {{
-            background: {bg};
-            color: {text};
+            background: {c['bg']};
+            color: {c['text']};
             font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
             font-size: 10pt;
         }}
         QGroupBox {{
-            background: {surface};
-            border: 1px solid {border};
+            background: {c['surface']};
+            border: 1px solid {c['border']};
             border-radius: 8px;
             margin-top: 14px;
             font-weight: 600;
@@ -56,70 +141,76 @@ def _qss(is_dark: bool) -> str:
             subcontrol-position: top left;
             left: 12px;
             padding: 0 8px;
-            background: {bg};
-            color: {text};
+            background: {c['bg']};
+            color: {c['text']};
+        }}
+        QGroupBox QLabel, QGroupBox QCheckBox {{
+            font-weight: normal;
         }}
         QLabel {{
             background: transparent;
         }}
         QLabel#statusCard {{
-            background: {surface};
-            border: 1px solid {border};
+            background: {c['surface']};
+            border: 1px solid {c['border']};
             border-radius: 8px;
             padding: 14px;
             font-size: 11pt;
         }}
+        QLabel#dim {{
+            color: {c['text_dim']};
+        }}
         QLabel#sunInfo {{
-            color: {text_dim};
+            color: {c['text_dim']};
             padding-top: 4px;
         }}
         QLineEdit, QComboBox, QSpinBox, QTimeEdit {{
-            background: {surface};
-            color: {text};
-            border: 1px solid {border};
+            background: {c['surface']};
+            color: {c['text']};
+            border: 1px solid {c['border']};
             border-radius: 6px;
             padding: 6px 10px;
             min-height: 22px;
-            selection-background-color: {accent};
-            selection-color: {accent_text};
+            selection-background-color: {c['accent']};
+            selection-color: {c['accent_text']};
         }}
         QLineEdit:hover, QComboBox:hover, QSpinBox:hover, QTimeEdit:hover {{
-            border-color: {border_strong};
+            border-color: {c['border_strong']};
         }}
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTimeEdit:focus {{
-            border-color: {accent};
+            border-color: {c['accent']};
         }}
         QLineEdit:read-only {{
-            color: {text_dim};
-            background: {bg};
+            color: {c['text_dim']};
+            background: {c['bg']};
         }}
         QComboBox::drop-down {{ border: none; width: 24px; }}
         QComboBox QAbstractItemView {{
-            background: {surface};
-            color: {text};
-            border: 1px solid {border};
-            selection-background-color: {accent};
-            selection-color: {accent_text};
+            background: {c['surface']};
+            color: {c['text']};
+            border: 1px solid {c['border']};
+            selection-background-color: {c['accent']};
+            selection-color: {c['accent_text']};
             outline: 0;
         }}
         QPushButton {{
-            background: {surface};
-            color: {text};
-            border: 1px solid {border};
+            background: {c['surface']};
+            color: {c['text']};
+            border: 1px solid {c['border']};
             border-radius: 6px;
             padding: 8px 16px;
             min-height: 24px;
         }}
-        QPushButton:hover {{ background: {surf_hover}; border-color: {border_strong}; }}
-        QPushButton:pressed {{ background: {border}; }}
+        QPushButton:hover {{ background: {c['surf_hover']}; border-color: {c['border_strong']}; }}
+        QPushButton:pressed {{ background: {c['border']}; }}
         QPushButton#applyBtn {{
-            background: {accent};
-            color: {accent_text};
-            border: 1px solid {accent};
+            background: {c['accent']};
+            color: {c['accent_text']};
+            border: 1px solid {c['accent']};
             font-weight: 600;
         }}
-        QPushButton#applyBtn:hover {{ background: {accent}; border: 1px solid {accent}; }}
-        QPushButton#applyBtn:pressed {{ background: {accent}; }}
+        QPushButton#applyBtn:hover {{ background: {c['accent']}; border: 1px solid {c['accent']}; }}
+        QPushButton#applyBtn:pressed {{ background: {c['accent']}; }}
         QPushButton#themeBtn {{
             font-family: "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
             font-size: 18pt;
@@ -129,14 +220,15 @@ def _qss(is_dark: bool) -> str:
             padding: 0;
         }}
         QPushButton#themeBtn[active="true"] {{
-            border: 2px solid {accent};
-            background: {surf_hover};
+            border: 2px solid {c['accent']};
+            background: {c['surf_hover']};
         }}
         QCheckBox {{ spacing: 8px; }}
+        QGroupBox QCheckBox {{ background: {c['surface']}; }}
         QToolTip {{
-            background: {surface};
-            color: {text};
-            border: 1px solid {border};
+            background: {c['surface']};
+            color: {c['text']};
+            border: 1px solid {c['border']};
             padding: 4px 8px;
             border-radius: 4px;
         }}
@@ -145,8 +237,8 @@ def _qss(is_dark: bool) -> str:
 
 def apply_app_theme(app) -> None:
     """Подбирает QSS под текущую системную палитру (Light/Dark)."""
-    scheme = app.styleHints().colorScheme()
-    app.setStyleSheet(_qss(scheme == Qt.ColorScheme.Dark))
+    is_dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    app.setStyleSheet(_qss(is_dark, _arrow_images(_PALETTES[is_dark]["text_dim"])))
 
 
 def make_app_icon() -> QIcon:
@@ -167,24 +259,115 @@ def make_app_icon() -> QIcon:
     return QIcon(pix)
 
 
-class MainWindow(QMainWindow):
-    """Окно настроек. theme_setter — функция смены темы Windows
-    (поэтапный сеттер из app.py: два флага с паузой + повторный broadcast)."""
+# ---------------------------------------------------------------------------
+# Форматирование времени (локальное время системы — как на часах Windows)
+# ---------------------------------------------------------------------------
 
-    def __init__(self, theme_setter):
+def _hhmm(moment: datetime) -> str:
+    return moment.astimezone().strftime("%H:%M")
+
+
+def _when(moment: datetime) -> str:
+    """«в 18:02» / «завтра в 07:32» / «26.09 в 07:32»."""
+    local = moment.astimezone()
+    today = datetime.now().astimezone().date()
+    hhmm = local.strftime("%H:%M")
+    if local.date() == today:
+        return tr("when.today", time=hhmm)
+    if local.date() == today + timedelta(days=1):
+        return tr("when.tomorrow", time=hhmm)
+    return tr("when.date", date=local.strftime("%d.%m"), time=hhmm)
+
+
+def _edge(moment: datetime, boundary: datetime) -> str:
+    """Время границы окна; «—», если окно упирается в край солнечных суток."""
+    return "—" if moment == boundary else _hhmm(moment)
+
+
+def _minutes(delta: timedelta) -> int:
+    return round(delta.total_seconds() / 60)
+
+
+def _theme_name(theme: str) -> str:
+    return tr("theme.light") if theme == LIGHT else tr("theme.dark")
+
+
+def preview_lines(p: SunPreview) -> list[str]:
+    """Строки подсказки «что будет сегодня» для режима по солнцу."""
+    lines = []
+    astro = p.astro
+    if not astro.has_light:
+        lines.append(tr("sun.polar_night"))
+    elif astro.light_all_day:
+        lines.append(tr("sun.polar_day"))
+    else:
+        lines.append(tr("sun.astro", sunrise=_edge(astro.light_from, astro.start),
+                        sunset=_edge(astro.dark_from, astro.end)))
+
+    plan, base = p.plan, p.base
+    if not plan.has_light:
+        lines.append(tr("sun.clouds_all_dark") if base.has_light else tr("sun.all_dark"))
+    elif plan.light_all_day:
+        lines.append(tr("sun.all_light"))
+    else:
+        lines.append(tr("sun.plan", light=_edge(plan.light_from, plan.start),
+                        dark=_edge(plan.dark_from, plan.end)))
+
+    if p.weather == "ok" and plan.has_light:
+        details = []
+        late = _minutes(plan.light_from - base.light_from)
+        early = _minutes(base.dark_from - plan.dark_from)
+        if late > 0:
+            details.append(tr("sun.shift_morning", min=late))
+        if early > 0:
+            details.append(tr("sun.shift_evening", min=early))
+        cloud = "—" if p.cloud_cover is None else f"{p.cloud_cover}%"
+        lines.append(tr("sun.clouds_line", cloud=cloud,
+                        details=", ".join(details) or tr("sun.no_shift")))
+    elif p.weather == "loading":
+        lines.append(tr("sun.clouds_loading"))
+    elif p.weather == "failed":
+        lines.append(tr("sun.no_weather"))
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Окно
+# ---------------------------------------------------------------------------
+
+class MainWindow(QWidget):
+    """Окно настроек и трей.
+
+    scheduler — ThemeScheduler (решения); theme_setter — функция смены темы
+    Windows. weather_updated можно испускать из любого потока (например, из
+    колбэка WeatherProvider) — обработка уйдёт в GUI-поток."""
+
+    weather_updated = Signal()
+
+    def __init__(self, scheduler, theme_setter):
         super().__init__()
+        self._scheduler = scheduler
         self._set_theme = theme_setter
+        self._last_set = float("-inf")      # monotonic() последней записи темы
+        self._last_status: Status | None = None
+        self._loading = True
+        self._minimize_hint_shown = False
+        self._fit_pending = False
         self.cfg = config.load_config()
+
         self.setWindowTitle(APP_DISPLAY_NAME)
-        self.setFixedSize(500, 710)
         self.setWindowIcon(make_app_icon())
+        self.setFixedWidth(WINDOW_WIDTH)
 
         self._build_ui()
-        self._load_to_ui()
         self._setup_tray()
+        self._load_to_ui()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
+        self.weather_updated.connect(self.tick)
+        QApplication.instance().styleHints().colorSchemeChanged.connect(
+            self._on_color_scheme_changed)
 
     def start_ticking(self, initial_delay_ms: int) -> None:
         """Проверка раз в минуту; первая — через initial_delay_ms.
@@ -192,20 +375,20 @@ class MainWindow(QMainWindow):
         Задержка нужна при автозапуске: переключение темы, пока оболочка
         Windows ещё прогружается, чаще всего ловит глюк полуперекрашенного
         интерфейса."""
-        self.timer.start(60_000)
+        self.timer.start(TICK_MS)
         QTimer.singleShot(initial_delay_ms, self.tick)
 
     # ---------- построение UI ----------
     def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QVBoxLayout(self)
         root.setSpacing(12)
         root.setContentsMargins(16, 16, 16, 16)
 
         self.status_label = QLabel()
         self.status_label.setObjectName("statusCard")
         self.status_label.setTextFormat(Qt.TextFormat.RichText)
+        self.status_label.setWordWrap(True)
+        self.status_label.linkActivated.connect(lambda _href: self._resume_auto())
         root.addWidget(self.status_label)
 
         # Режим
@@ -219,60 +402,7 @@ class MainWindow(QMainWindow):
         ml.addWidget(self.mode_combo)
         root.addWidget(mode_box)
 
-        # Параметры «по солнцу»
-        self.sun_box = QGroupBox(tr("sun.group"))
-        sl = QVBoxLayout(self.sun_box)
-        sl.setContentsMargins(14, 18, 14, 14)
-        sl.setSpacing(10)
-
-        # Фиксированная ширина колонки лейблов — чтобы поля не съезжали.
-        LABEL_W = 76
-
-        def _label(text: str) -> QLabel:
-            lbl = QLabel(text)
-            lbl.setFixedWidth(LABEL_W)
-            return lbl
-
-        h1 = QHBoxLayout()
-        h1.addWidget(_label(tr("sun.city")))
-        self.city_combo = QComboBox()
-        for city_id in config.CITIES:
-            self.city_combo.addItem(tr(f"city.{city_id}"), city_id)
-        self.city_combo.addItem(tr("city.custom"), "custom")
-        self.city_combo.currentIndexChanged.connect(self._on_city_changed)
-        h1.addWidget(self.city_combo, 1)
-        sl.addLayout(h1)
-
-        h2 = QHBoxLayout()
-        h2.addWidget(_label(tr("sun.lat")))
-        self.lat_edit = QLineEdit()
-        h2.addWidget(self.lat_edit, 1)
-        h2.addWidget(QLabel(tr("sun.lon")))
-        self.lon_edit = QLineEdit()
-        h2.addWidget(self.lon_edit, 1)
-        sl.addLayout(h2)
-
-        h3 = QHBoxLayout()
-        h3.addWidget(_label(tr("sun.offset")))
-        self.offset_spin = QSpinBox()
-        self.offset_spin.setRange(-180, 180)
-        self.offset_spin.setSuffix(tr("sun.offset_suffix"))
-        h3.addWidget(self.offset_spin)
-        hint = QLabel(tr("sun.offset_hint"))
-        hint.setObjectName("sunInfo")
-        h3.addWidget(hint)
-        h3.addStretch()
-        sl.addLayout(h3)
-
-        self.clouds_cb = QCheckBox(tr("sun.clouds"))
-        self.clouds_cb.toggled.connect(self._update_sun_info)
-        sl.addWidget(self.clouds_cb)
-
-        self.sun_info_label = QLabel()
-        self.sun_info_label.setObjectName("sunInfo")
-        self.sun_info_label.setWordWrap(True)
-        sl.addWidget(self.sun_info_label)
-        root.addWidget(self.sun_box)
+        root.addWidget(self._build_sun_box())
 
         # Параметры «по расписанию»
         self.time_box = QGroupBox(tr("time.group"))
@@ -292,7 +422,6 @@ class MainWindow(QMainWindow):
 
         self.autostart_cb = QCheckBox(tr("autostart"))
         root.addWidget(self.autostart_cb)
-
         self.desktop_lnk_cb = QCheckBox(tr("desktop_shortcut"))
         root.addWidget(self.desktop_lnk_cb)
 
@@ -303,44 +432,104 @@ class MainWindow(QMainWindow):
         self.apply_btn.setObjectName("applyBtn")
         self.apply_btn.clicked.connect(self._on_apply)
         bl.addWidget(self.apply_btn, 2)
-
-        self.light_btn = QPushButton("☀")
-        self.light_btn.setObjectName("themeBtn")
-        self.light_btn.setToolTip(tr("btn.light_tip"))
-        self.light_btn.clicked.connect(lambda: self._manual_set("light"))
+        self.light_btn = self._theme_button("☀", "btn.light_tip", LIGHT)
         bl.addWidget(self.light_btn)
-
-        self.dark_btn = QPushButton("🌙")
-        self.dark_btn.setObjectName("themeBtn")
-        self.dark_btn.setToolTip(tr("btn.dark_tip"))
-        self.dark_btn.clicked.connect(lambda: self._manual_set("dark"))
+        self.dark_btn = self._theme_button("🌙", "btn.dark_tip", DARK)
         bl.addWidget(self.dark_btn)
         root.addLayout(bl)
 
-        root.addStretch()
+    def _build_sun_box(self) -> QGroupBox:
+        self.sun_box = QGroupBox(tr("sun.group"))
+        sl = QVBoxLayout(self.sun_box)
+        sl.setContentsMargins(14, 18, 14, 14)
+        sl.setSpacing(10)
+
+        # Фиксированная ширина колонки лейблов — чтобы поля не съезжали.
+        def row(label_key: str, *widgets) -> None:
+            h = QHBoxLayout()
+            lbl = QLabel(tr(label_key))
+            lbl.setFixedWidth(76)
+            h.addWidget(lbl)
+            for w in widgets:
+                if isinstance(w, tuple):
+                    h.addWidget(*w)
+                else:
+                    h.addWidget(w)
+            sl.addLayout(h)
+
+        self.city_combo = QComboBox()
+        for city_id in config.CITIES:
+            self.city_combo.addItem(tr(f"city.{city_id}"), city_id)
+        self.city_combo.addItem(tr("city.custom"), "custom")
+        self.city_combo.currentIndexChanged.connect(self._on_city_changed)
+        row("sun.city", (self.city_combo, 1))
+
+        self.lat_edit = QLineEdit()
+        self.lon_edit = QLineEdit()
+        for edit in (self.lat_edit, self.lon_edit):
+            edit.editingFinished.connect(self._update_preview)
+        row("sun.lat", (self.lat_edit, 1), QLabel(tr("sun.lon")), (self.lon_edit, 1))
+
+        self.morning_spin = self._elevation_spin()
+        self.evening_spin = self._elevation_spin()
+        for spin, label_key, hint_key in (
+            (self.morning_spin, "sun.morning", "sun.morning_hint"),
+            (self.evening_spin, "sun.evening", "sun.evening_hint"),
+        ):
+            hint = QLabel(tr(hint_key))
+            hint.setObjectName("dim")
+            row(label_key, spin, (hint, 1))
+
+        help_label = QLabel(tr("sun.elevation_help"))
+        help_label.setObjectName("dim")
+        help_label.setWordWrap(True)
+        sl.addWidget(help_label)
+
+        self.clouds_cb = QCheckBox(tr("sun.clouds"))
+        self.clouds_cb.toggled.connect(self._update_preview)
+        sl.addWidget(self.clouds_cb)
+
+        self.sun_info_label = QLabel()
+        self.sun_info_label.setObjectName("sunInfo")
+        self.sun_info_label.setTextFormat(Qt.TextFormat.RichText)
+        self.sun_info_label.setWordWrap(True)
+        sl.addWidget(self.sun_info_label)
+        return self.sun_box
+
+    def _elevation_spin(self) -> QSpinBox:
+        spin = QSpinBox()
+        spin.setRange(config.ELEVATION_MIN, config.ELEVATION_MAX)
+        spin.setSuffix("°")
+        spin.setFixedWidth(84)
+        spin.valueChanged.connect(self._update_preview)
+        return spin
+
+    def _theme_button(self, glyph: str, tip_key: str, theme: str) -> QPushButton:
+        btn = QPushButton(glyph)
+        btn.setObjectName("themeBtn")
+        btn.setToolTip(tr(tip_key))
+        btn.clicked.connect(lambda: self._manual_set(theme))
+        return btn
 
     def _setup_tray(self):
         self.tray = QSystemTrayIcon(make_app_icon(), self)
         self.tray.setToolTip(APP_DISPLAY_NAME)
-        menu = QMenu()
+        menu = QMenu(self)
 
-        a_show = QAction(tr("tray.open"), self)
-        a_show.triggered.connect(self._show_window)
-        menu.addAction(a_show)
+        def action(key: str, slot) -> QAction:
+            a = QAction(tr(key), self)
+            a.triggered.connect(slot)
+            menu.addAction(a)
+            return a
+
+        action("tray.open", self._show_window)
         menu.addSeparator()
-
-        a_light = QAction(tr("tray.light"), self)
-        a_light.triggered.connect(lambda: self._manual_set("light"))
-        menu.addAction(a_light)
-
-        a_dark = QAction(tr("tray.dark"), self)
-        a_dark.triggered.connect(lambda: self._manual_set("dark"))
-        menu.addAction(a_dark)
-
+        action("tray.light", lambda: self._manual_set(LIGHT))
+        action("tray.dark", lambda: self._manual_set(DARK))
+        self.auto_action = action("tray.auto", self._resume_auto)
+        self.auto_action.setVisible(False)
         menu.addSeparator()
-        a_quit = QAction(tr("tray.quit"), self)
-        a_quit.triggered.connect(QApplication.instance().quit)
-        menu.addAction(a_quit)
+        action("tray.quit", QApplication.instance().quit)
 
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._on_tray_activated)
@@ -348,126 +537,131 @@ class MainWindow(QMainWindow):
 
     # ---------- наполнение из конфига ----------
     def _load_to_ui(self):
-        idx = self.mode_combo.findData(self.cfg["mode"])
-        self.mode_combo.setCurrentIndex(max(0, idx))
-
-        # Миграция: старые конфиги хранили русское название («Москва»),
-        # неизвестные города («Простоквашино») превращаются в «Свои координаты»
-        # с сохранением lat/lon/tz пользователя.
-        city_id = config.resolve_city_id(self.cfg)
-        idx = self.city_combo.findData(city_id)
-        self.city_combo.setCurrentIndex(max(0, idx))
-
-        self.lat_edit.setText(str(self.cfg["lat"]))
-        self.lon_edit.setText(str(self.cfg["lon"]))
-        self.offset_spin.setValue(self.cfg.get("offset_min", 0))
-
-        self.light_time_edit.setTime(QTime.fromString(self.cfg["light_time"], "HH:mm"))
-        self.dark_time_edit.setTime(QTime.fromString(self.cfg["dark_time"], "HH:mm"))
-
-        self.clouds_cb.setChecked(bool(self.cfg.get("use_clouds", False)))
-        self.autostart_cb.setChecked(winapi.is_autostart_enabled())
+        self._loading = True
+        cfg = self.cfg
+        self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(cfg["mode"])))
+        self.city_combo.setCurrentIndex(max(0, self.city_combo.findData(cfg["city"])))
+        self.lat_edit.setText(str(cfg["lat"]))
+        self.lon_edit.setText(str(cfg["lon"]))
+        self.morning_spin.setValue(round(cfg["morning_elevation"]))
+        self.evening_spin.setValue(round(cfg["evening_elevation"]))
+        self.light_time_edit.setTime(QTime.fromString(cfg["light_time"], "HH:mm"))
+        self.dark_time_edit.setTime(QTime.fromString(cfg["dark_time"], "HH:mm"))
+        self.clouds_cb.setChecked(cfg["use_clouds"])
+        self.clouds_cb.setToolTip(tr("sun.clouds_tip", max=cfg["clouds_max_offset_min"]))
+        try:
+            self.autostart_cb.setChecked(winapi.is_autostart_enabled())
+        except OSError as e:
+            log.warning("Autostart state: %s", e)
         # Состояние чекбокса — это факт существования файла ярлыка.
         try:
             self.desktop_lnk_cb.setChecked(winapi.desktop_shortcut_path().exists())
         except OSError:
             self.desktop_lnk_cb.setEnabled(False)
-
+        self._loading = False
         self._on_mode_changed()
         self._on_city_changed()
 
-    # ---------- обработчики ----------
+    # ---------- обработчики формы ----------
     def _on_mode_changed(self):
         is_sun = self.mode_combo.currentData() == "sun"
         self.sun_box.setVisible(is_sun)
         self.time_box.setVisible(not is_sun)
-        if is_sun and not suncalc.ASTRAL_OK:
-            self.sun_info_label.setText(tr("sun.no_astral"))
-
-    def _current_tz(self) -> str:
-        """Таймзона выбранного пресета или из конфига (для своих координат)."""
-        city_id = self.city_combo.currentData()
-        if city_id in config.CITIES:
-            return config.CITIES[city_id][2]
-        return self.cfg.get("tz", "Europe/Moscow")
+        self._update_preview()
+        self._fit_height()
 
     def _on_city_changed(self):
         city_id = self.city_combo.currentData()
-        custom = city_id == "custom"
-        self.lat_edit.setReadOnly(not custom)
-        self.lon_edit.setReadOnly(not custom)
-        if not custom and city_id in config.CITIES:
-            lat, lon, _tz = config.CITIES[city_id]
+        preset = city_id in config.CITIES
+        self.lat_edit.setReadOnly(preset)
+        self.lon_edit.setReadOnly(preset)
+        if preset:
+            lat, lon = config.CITIES[city_id]
             self.lat_edit.setText(str(lat))
             self.lon_edit.setText(str(lon))
-        self._update_sun_info()
+        self._update_preview()
 
-    def _update_sun_info(self):
-        if not suncalc.ASTRAL_OK:
-            return
-        try:
-            lat = float(self.lat_edit.text())
-            lon = float(self.lon_edit.text())
-            tz = self._current_tz()
-            sr, ss = suncalc.compute_sun_times(lat, lon, tz)
-            if not (sr and ss):
-                return
-            offset = self.offset_spin.value()
-
-            cloud_line = ""
-            if self.clouds_cb.isChecked():
-                tmp_cfg = {
-                    "lat": lat, "lon": lon, "tz": tz, "use_clouds": True,
-                    "clouds_max_offset_min": self.cfg.get("clouds_max_offset_min", 120),
-                }
-                # Работает по кешу; свежие данные подтянет фоновый поток к
-                # следующему tick.
-                suncalc.weather.refresh_in_background(lat, lon, tz)
-                sr, ss, cloud = suncalc.apply_weather_adjustment(sr, ss, tmp_cfg)
-                if cloud is not None:
-                    cloud_line = tr("sun.cloud_line", cloud=cloud)
-                else:
-                    cloud_line = tr("sun.no_weather")
-
-            sr2 = sr + timedelta(minutes=offset)
-            ss2 = ss + timedelta(minutes=offset)
-            self.sun_info_label.setText(
-                tr("sun.today",
-                   sr=sr.strftime("%H:%M"), sr2=sr2.strftime("%H:%M"),
-                   ss=ss.strftime("%H:%M"), ss2=ss2.strftime("%H:%M"))
-                + cloud_line
-            )
-        except Exception as e:
-            self.sun_info_label.setText(tr("sun.calc_error", error=e))
-
-    def _gather_config(self) -> dict:
+    def _form_config(self) -> dict:
+        """Конфиг из полей формы; ValueError с понятным текстом при ошибке."""
         cfg = dict(self.cfg)
         cfg["mode"] = self.mode_combo.currentData()
         cfg["city"] = self.city_combo.currentData()
-        try:
-            cfg["lat"] = float(self.lat_edit.text().replace(",", "."))
-            cfg["lon"] = float(self.lon_edit.text().replace(",", "."))
-        except ValueError:
-            raise ValueError(tr("err.coords"))
         if cfg["city"] in config.CITIES:
-            cfg["tz"] = config.CITIES[cfg["city"]][2]
-        cfg["offset_min"] = self.offset_spin.value()
+            cfg["lat"], cfg["lon"] = config.CITIES[cfg["city"]]
+        else:
+            try:
+                lat = float(self.lat_edit.text().replace(",", "."))
+                lon = float(self.lon_edit.text().replace(",", "."))
+            except ValueError:
+                raise ValueError(tr("err.coords")) from None
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError(tr("err.coords_range"))
+            cfg["lat"], cfg["lon"] = lat, lon
+        cfg["morning_elevation"] = self.morning_spin.value()
+        cfg["evening_elevation"] = self.evening_spin.value()
         cfg["light_time"] = self.light_time_edit.time().toString("HH:mm")
         cfg["dark_time"] = self.dark_time_edit.time().toString("HH:mm")
         cfg["use_clouds"] = self.clouds_cb.isChecked()
         return cfg
 
+    def _update_preview(self):
+        """Подсказка «что будет сегодня» по ещё не сохранённым полям формы."""
+        if self._loading or self.mode_combo.currentData() != "sun":
+            return
+        try:
+            lines = preview_lines(self._scheduler.preview(self._form_config()))
+            text = "<br>".join(lines)
+        except ValueError as e:
+            text = "⚠ " + html.escape(str(e))
+        except Exception as e:
+            log.exception("Preview failed")
+            text = html.escape(tr("sun.calc_error", error=e))
+        if text != self.sun_info_label.text():
+            self.sun_info_label.setText(text)
+            self._fit_height()
+
+    def _fit_height(self):
+        """Высота окна — по содержимому: блоки режимов скрываются, подсказка
+        и статус меняют число строк. Пересчёт откладывается до обработки
+        событий раскладки — иначе кеш размеров ещё старый, и нижние строки
+        обрезаются."""
+        if not self._fit_pending:
+            self._fit_pending = True
+            QTimer.singleShot(0, self._do_fit_height)
+
+    def _do_fit_height(self):
+        self._fit_pending = False
+        self.ensurePolished()
+        self.layout().activate()
+        height = self.heightForWidth(WINDOW_WIDTH)
+        self.setFixedHeight(height if height > 0 else self.sizeHint().height())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_height()
+
     def _on_apply(self):
         try:
-            self.cfg = self._gather_config()
+            cfg = self._form_config()
         except ValueError as e:
             QMessageBox.warning(self, tr("err.title"), str(e))
             return
-        config.save_config(self.cfg)
-        winapi.set_autostart(self.autostart_cb.isChecked())
+        try:
+            config.save_config(cfg)
+        except OSError as e:
+            log.error("Cannot save config: %s", e)
+            QMessageBox.warning(self, tr("err.title"), str(e))
+            return
+        self.cfg = cfg
+        try:
+            winapi.set_autostart(self.autostart_cb.isChecked())
+        except OSError as e:
+            log.warning("Autostart: %s", e)
         self._apply_desktop_shortcut(self.desktop_lnk_cb.isChecked())
-        self.tick()
-        self._update_sun_info()
+        self.clouds_cb.setToolTip(tr("sun.clouds_tip", max=cfg["clouds_max_offset_min"]))
+        # Новые настройки — новое расписание: ручной выбор больше не нужен.
+        self._scheduler.clear_manual()
+        self.tick(force=True)
         self.tray.showMessage(APP_DISPLAY_NAME, tr("tray.saved"),
                               QSystemTrayIcon.MessageIcon.Information, 2000)
 
@@ -483,10 +677,84 @@ class MainWindow(QMainWindow):
         except OSError as e:
             log.warning("Desktop shortcut: %s", e)
 
-    def _manual_set(self, theme: str):
+    # ---------- тема ----------
+    def _apply(self, theme: str) -> bool:
+        """Записать тему, если в реестре другая (или флаги рассинхронены —
+        остаток сбоя прошлой смены; полная поэтапная запись выравнивает оба)."""
+        if theme == winapi.get_current_theme() and winapi.theme_flags_in_sync():
+            return False
         self._set_theme(theme)
-        self._update_status(theme, manual=True)
+        self._last_set = _time.monotonic()
+        return True
 
+    def tick(self, force: bool = False):
+        """Проверка по расписанию. force — действие пользователя: применить
+        сразу, не дожидаясь окончания поэтапной записи прошлой смены."""
+        try:
+            status = self._scheduler.evaluate(self.cfg)
+            if force or _time.monotonic() - self._last_set >= SETTLE_SEC:
+                self._apply(status.theme)
+            self._show_status(status)
+            if self.isVisible():        # скрытому окну подсказка не нужна
+                self._update_preview()
+        except Exception:
+            log.exception("tick failed")
+
+    def _manual_set(self, theme: str):
+        try:
+            self._scheduler.set_manual(theme, self.cfg)
+            status = self._scheduler.evaluate(self.cfg)
+            self._apply(status.theme)
+            self._show_status(status)
+        except Exception:
+            log.exception("Manual switch failed")
+
+    def _resume_auto(self):
+        self._scheduler.clear_manual()
+        self.tick(force=True)
+
+    def _on_color_scheme_changed(self, _scheme):
+        # Цвета в HTML статуса зависят от палитры — перерисовать.
+        if self._last_status is not None:
+            self._show_status(self._last_status)
+
+    # ---------- статус ----------
+    def _show_status(self, st: Status):
+        self._last_status = st
+        colors = _PALETTES[_is_dark()]
+        if st.manual:
+            line = (tr("status.manual", when=_when(st.next_switch))
+                    if st.next_switch else tr("status.manual_no_end"))
+            link = (f' · <a href="auto" style="color:{colors["accent"]};">'
+                    f'{tr("status.resume")}</a>')
+        elif st.next_switch is not None:
+            to = tr("switch.to_light") if st.next_theme == LIGHT else tr("switch.to_dark")
+            line, link = tr("status.next", to=to, when=_when(st.next_switch)), ""
+        else:
+            line, link = tr("status.no_switch"), ""
+
+        icon = "☀" if st.theme == LIGHT else "🌙"
+        mode = tr("mode.sun_short") if self.cfg["mode"] == "sun" else tr("mode.time_short")
+        checked = tr("status.checked", time=datetime.now().strftime("%H:%M:%S"))
+        # Эмодзи через Segoe UI Emoji — иначе рендерятся монохромными.
+        self.status_label.setText(
+            f'<span style="font-family:\'Segoe UI Emoji\';">{icon}</span>&nbsp; '
+            f'{tr("status.active_theme")}: <b>{_theme_name(st.theme)}</b><br>'
+            f'{html.escape(line)}{link}<br>'
+            f'<span style="color:{colors["text_dim"]}; font-size:9pt;">'
+            f'{mode} · {checked}</span>'
+        )
+        self.tray.setToolTip(
+            f"{APP_DISPLAY_NAME}\n{tr('status.active_theme')}: "
+            f"{_theme_name(st.theme)}\n{line}")
+        self.auto_action.setVisible(st.manual)
+        self._fit_height()
+        for btn, key in ((self.light_btn, LIGHT), (self.dark_btn, DARK)):
+            btn.setProperty("active", st.theme == key)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    # ---------- окно и трей ----------
     def _on_tray_activated(self, reason):
         if reason in (
             QSystemTrayIcon.ActivationReason.Trigger,
@@ -495,6 +763,7 @@ class MainWindow(QMainWindow):
             self._show_window()
 
     def _show_window(self):
+        self._update_preview()
         self.showNormal()
         self.activateWindow()
         self.raise_()
@@ -503,40 +772,7 @@ class MainWindow(QMainWindow):
         # Закрытие окна — сворачивание в трей, не выход.
         event.ignore()
         self.hide()
-        self.tray.showMessage(APP_DISPLAY_NAME, tr("tray.minimized"),
-                              QSystemTrayIcon.MessageIcon.Information, 2000)
-
-    # ---------- основной цикл ----------
-    def tick(self):
-        try:
-            if self.cfg.get("use_clouds"):
-                # Обновление кеша погоды — в фоне, tick не блокируется.
-                suncalc.weather.refresh_in_background(
-                    self.cfg["lat"], self.cfg["lon"], self.cfg["tz"])
-            target = suncalc.determine_target_theme(self.cfg)
-            current = winapi.get_current_theme()
-            # Форс и при рассинхроне флагов (остаток сбоя прошлой смены):
-            # полная поэтапная запись выравнивает оба.
-            if target != current or not winapi.theme_flags_in_sync():
-                self._set_theme(target)
-            self._update_status(target)
-            self._update_sun_info()
-        except Exception as e:
-            log.exception("tick failed: %s", e)
-
-    def _update_status(self, theme: str, manual: bool = False):
-        icon = "☀" if theme == "light" else "🌙"
-        name = tr("theme.light") if theme == "light" else tr("theme.dark")
-        suffix = tr("status.manual_suffix") if manual else ""
-        mode = tr("mode.sun_short") if self.cfg["mode"] == "sun" else tr("mode.time_short")
-        # Эмодзи через Segoe UI Emoji — иначе рендерятся монохромными.
-        icon_html = f'<span style="font-family:\'Segoe UI Emoji\';">{icon}</span>'
-        self.status_label.setText(
-            f"{icon_html}  {tr('status.active_theme')}: <b>{name}</b>{suffix}<br>"
-            f"{tr('status.mode')}: {mode}  •  {tr('status.checked')}: "
-            f"{datetime.now().strftime('%H:%M:%S')}"
-        )
-        for btn, key in ((self.light_btn, "light"), (self.dark_btn, "dark")):
-            btn.setProperty("active", theme == key)
-            btn.style().unpolish(btn)
-            btn.style().polish(btn)
+        if not self._minimize_hint_shown:
+            self._minimize_hint_shown = True
+            self.tray.showMessage(APP_DISPLAY_NAME, tr("tray.minimized"),
+                                  QSystemTrayIcon.MessageIcon.Information, 2000)

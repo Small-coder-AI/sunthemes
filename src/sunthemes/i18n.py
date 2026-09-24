@@ -11,42 +11,104 @@ STRINGS: dict[str, dict[str, str]] = {
     "status.active_theme": {"ru": "Активна тема", "en": "Current theme"},
     "theme.light": {"ru": "Светлая", "en": "Light"},
     "theme.dark": {"ru": "Тёмная", "en": "Dark"},
-    "status.manual_suffix": {"ru": "  (применено вручную)", "en": "  (set manually)"},
-    "status.mode": {"ru": "Режим", "en": "Mode"},
-    "mode.sun_short": {"ru": "по солнцу", "en": "by the sun"},
-    "mode.time_short": {"ru": "по расписанию", "en": "by schedule"},
-    "status.checked": {"ru": "проверка", "en": "checked"},
+    "switch.to_light": {"ru": "на светлую", "en": "to light"},
+    "switch.to_dark": {"ru": "на тёмную", "en": "to dark"},
+    "status.next": {"ru": "Смена {to} — {when}", "en": "Switch {to} {when}"},
+    "status.no_switch": {
+        "ru": "Смены темы в ближайшие дни не будет",
+        "en": "No theme change in the coming days",
+    },
+    "status.manual": {
+        "ru": "Выбрано вручную, расписание вернётся {when}",
+        "en": "Set manually; schedule resumes {when}",
+    },
+    "status.manual_no_end": {"ru": "Выбрано вручную", "en": "Set manually"},
+    "status.resume": {"ru": "вернуть авто", "en": "resume auto"},
+    "status.checked": {"ru": "проверено {time}", "en": "checked {time}"},
+    "when.today": {"ru": "в {time}", "en": "at {time}"},
+    "when.tomorrow": {"ru": "завтра в {time}", "en": "tomorrow at {time}"},
+    "when.date": {"ru": "{date} в {time}", "en": "{date} at {time}"},
+    "mode.sun_short": {"ru": "По солнцу", "en": "By the sun"},
+    "mode.time_short": {"ru": "По расписанию", "en": "By schedule"},
     # --- выбор режима ---
     "mode.group": {"ru": "Режим переключения", "en": "Switching mode"},
-    "mode.sun": {"ru": "По солнцу (восход/закат)", "en": "By the sun (sunrise/sunset)"},
-    "mode.time": {"ru": "По расписанию (фикс. время)", "en": "By schedule (fixed time)"},
+    "mode.sun": {
+        "ru": "По солнцу (высота над горизонтом)",
+        "en": "By the sun (height above the horizon)",
+    },
+    "mode.time": {
+        "ru": "По расписанию (фиксированное время)",
+        "en": "By schedule (fixed times)",
+    },
     # --- режим «по солнцу» ---
     "sun.group": {"ru": "Параметры режима «По солнцу»", "en": "Sun mode settings"},
     "sun.city": {"ru": "Город:", "en": "City:"},
     "sun.lat": {"ru": "Широта:", "en": "Latitude:"},
     "sun.lon": {"ru": "Долгота:", "en": "Longitude:"},
-    "sun.offset": {"ru": "Сдвиг:", "en": "Offset:"},
-    "sun.offset_suffix": {"ru": " мин", "en": " min"},
-    "sun.offset_hint": {"ru": "(− раньше / + позже)", "en": "(− earlier / + later)"},
+    "sun.morning": {"ru": "Утром:", "en": "Morning:"},
+    "sun.morning_hint": {
+        "ru": "светлая, когда солнце выше",
+        "en": "light once the sun is above",
+    },
+    "sun.evening": {"ru": "Вечером:", "en": "Evening:"},
+    "sun.evening_hint": {
+        "ru": "тёмная, когда солнце ниже",
+        "en": "dark once the sun is below",
+    },
+    "sun.elevation_help": {
+        "ru": "Высота солнца над горизонтом: 0° — восход/закат. Больше — "
+              "светлая позже утром и тёмная раньше вечером.",
+        "en": "Sun height above the horizon: 0° is sunrise/sunset. Higher "
+              "means light later in the morning and dark earlier in the evening.",
+    },
     "sun.clouds": {
-        "ru": "Учитывать облачность (Open-Meteo, без ключа)",
-        "en": "Account for cloud cover (Open-Meteo, no API key)",
+        "ru": "Учитывать облачность (прогноз Open-Meteo, без ключа)",
+        "en": "Account for clouds (Open-Meteo forecast, no API key)",
     },
-    "sun.no_astral": {
-        "ru": "⚠ Не установлена библиотека astral. Выполни: pip install astral",
-        "en": "⚠ The astral library is missing. Run: pip install astral",
+    "sun.clouds_tip": {
+        "ru": "В пасмурную погоду светлеет позже и темнеет раньше — тема "
+              "сдвигается следом, но не больше чем на {max} мин. Для прогноза "
+              "координаты округляются до ~10 км.",
+        "en": "On overcast days it gets light later and dark earlier — the "
+              "theme follows, by at most {max} min. Coordinates are rounded to "
+              "~10 km for the forecast request.",
     },
-    "sun.today": {
-        "ru": "Сегодня: восход {sr} → светлая {sr2} | закат {ss} → тёмная {ss2}",
-        "en": "Today: sunrise {sr} → light {sr2} | sunset {ss} → dark {ss2}",
+    "sun.astro": {
+        "ru": "Восход {sunrise} · закат {sunset}",
+        "en": "Sunrise {sunrise} · sunset {sunset}",
     },
-    "sun.cloud_line": {
-        "ru": "<br>Облачность сейчас: <b>{cloud}%</b>. Времена ниже — по реальной освещённости (Open-Meteo).",
-        "en": "<br>Cloud cover now: <b>{cloud}%</b>. Times below follow actual daylight (Open-Meteo).",
+    "sun.polar_day": {
+        "ru": "Полярный день: солнце не заходит",
+        "en": "Polar day: the sun does not set",
     },
+    "sun.polar_night": {
+        "ru": "Полярная ночь: солнце не восходит",
+        "en": "Polar night: the sun does not rise",
+    },
+    "sun.plan": {
+        "ru": "Сегодня: светлая {light} → тёмная {dark}",
+        "en": "Today: light {light} → dark {dark}",
+    },
+    "sun.all_dark": {
+        "ru": "Сегодня солнце не поднимается выше порога — весь день тёмная",
+        "en": "Today the sun stays below the threshold — dark all day",
+    },
+    "sun.all_light": {
+        "ru": "Сегодня солнце не опускается ниже порога — весь день светлая",
+        "en": "Today the sun stays above the threshold — light all day",
+    },
+    "sun.clouds_all_dark": {
+        "ru": "Сегодня слишком пасмурно — весь день тёмная",
+        "en": "Too overcast today — dark all day",
+    },
+    "sun.clouds_line": {"ru": "Облачность {cloud}: {details}", "en": "Clouds {cloud}: {details}"},
+    "sun.shift_morning": {"ru": "светлая на {min} мин позже", "en": "light {min} min later"},
+    "sun.shift_evening": {"ru": "тёмная на {min} мин раньше", "en": "dark {min} min earlier"},
+    "sun.no_shift": {"ru": "светло, без поправки", "en": "bright enough, no correction"},
+    "sun.clouds_loading": {"ru": "Загружаю прогноз погоды…", "en": "Loading the weather forecast…"},
     "sun.no_weather": {
-        "ru": "<br>⚠ Не удалось получить погоду (нет интернета?). Работаем по чистой астрономии.",
-        "en": "<br>⚠ Could not fetch weather (no internet?). Falling back to pure astronomy.",
+        "ru": "⚠ Прогноз недоступен (нет интернета?) — время по чистой астрономии.",
+        "en": "⚠ Forecast unavailable (no internet?) — using pure astronomy.",
     },
     "sun.calc_error": {"ru": "⚠ Не удалось рассчитать: {error}", "en": "⚠ Calculation failed: {error}"},
     # --- режим «по расписанию» ---
@@ -67,12 +129,19 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Sunthemes — automatic Windows theme switching by the sun",
     },
     "btn.apply": {"ru": "Сохранить и применить", "en": "Save and apply"},
-    "btn.light_tip": {"ru": "Включить светлую тему вручную", "en": "Switch to light theme manually"},
-    "btn.dark_tip": {"ru": "Включить тёмную тему вручную", "en": "Switch to dark theme manually"},
+    "btn.light_tip": {
+        "ru": "Включить светлую тему вручную (до следующей смены)",
+        "en": "Switch to light manually (until the next scheduled change)",
+    },
+    "btn.dark_tip": {
+        "ru": "Включить тёмную тему вручную (до следующей смены)",
+        "en": "Switch to dark manually (until the next scheduled change)",
+    },
     # --- трей ---
     "tray.open": {"ru": "Открыть настройки", "en": "Open settings"},
     "tray.light": {"ru": "☀ Светлая тема", "en": "☀ Light theme"},
     "tray.dark": {"ru": "🌙 Тёмная тема", "en": "🌙 Dark theme"},
+    "tray.auto": {"ru": "Вернуть автоматический режим", "en": "Resume automatic switching"},
     "tray.quit": {"ru": "Выход", "en": "Quit"},
     "tray.saved": {"ru": "Настройки сохранены и применены.", "en": "Settings saved and applied."},
     "tray.minimized": {
@@ -84,6 +153,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "err.coords": {
         "ru": "Координаты должны быть числами (например, 55.7558).",
         "en": "Coordinates must be numbers (e.g. 55.7558).",
+    },
+    "err.coords_range": {
+        "ru": "Широта — от −90 до 90, долгота — от −180 до 180.",
+        "en": "Latitude must be within −90…90 and longitude within −180…180.",
     },
     "err.no_tray": {"ru": "Системный трей недоступен.", "en": "System tray is not available."},
     "msg.already_running": {

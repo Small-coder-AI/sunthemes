@@ -20,7 +20,7 @@ def test_legacy_names_map_to_known_cities():
 def test_resolve_city_id_modern_and_legacy_and_unknown():
     assert config.resolve_city_id({"city": "moscow"}) == "moscow"
     assert config.resolve_city_id({"city": "Москва"}) == "moscow"
-    # неизвестный город (например, «Простоквашино» из старого конфига) → свои координаты
+    # неизвестный город из старого конфига → свои координаты
     assert config.resolve_city_id({"city": "Простоквашино"}) == "custom"
     assert config.resolve_city_id({}) == "custom"
 
@@ -37,9 +37,12 @@ def test_load_config_merges_defaults(tmp_path, monkeypatch):
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
     cfg_file = tmp_path / "config.json"
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
-    cfg = dict(config.DEFAULT_CONFIG, lat=51.5)
+    cfg = dict(config.DEFAULT_CONFIG, city="custom", lat=51.5, morning_elevation=3)
     config.save_config(cfg)
-    assert config.load_config()["lat"] == 51.5
+    loaded = config.load_config()
+    assert (loaded["lat"], loaded["morning_elevation"]) == (51.5, 3)
+    # запись атомарная: временный файл не остаётся
+    assert [p.name for p in tmp_path.iterdir()] == ["config.json"]
 
 
 def test_load_config_resets_broken_values(tmp_path, monkeypatch):
@@ -48,26 +51,28 @@ def test_load_config_resets_broken_values(tmp_path, monkeypatch):
     cfg_file = tmp_path / "config.json"
     cfg_file.write_text(json.dumps({
         "mode": "banana",
+        "city": "custom",
         "lat": "not-a-number",
         "lon": 999,
-        "tz": "Mars/Olympus",
+        "morning_elevation": True,   # bool — не число
+        "evening_elevation": 45,     # вне диапазона
         "light_time": "25:99",
         "dark_time": 1900,
-        "offset_min": True,          # bool — не число
         "use_clouds": "yes",
         "clouds_max_offset_min": -5,
     }), encoding="utf-8")
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
     cfg = config.load_config()
-    for key in ("mode", "lat", "lon", "tz", "light_time", "dark_time",
-                "offset_min", "use_clouds", "clouds_max_offset_min"):
+    for key in ("mode", "lat", "lon", "morning_elevation", "evening_elevation",
+                "light_time", "dark_time", "use_clouds", "clouds_max_offset_min"):
         assert cfg[key] == config.DEFAULT_CONFIG[key], key
 
 
 def test_load_config_keeps_valid_and_unknown_values(tmp_path, monkeypatch):
     cfg_file = tmp_path / "config.json"
     cfg_file.write_text(json.dumps(
-        {"mode": "time", "lat": 51.5, "someday_key": 1}), encoding="utf-8")
+        {"mode": "time", "city": "custom", "lat": 51.5, "someday_key": 1}),
+        encoding="utf-8")
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
     cfg = config.load_config()
     assert cfg["mode"] == "time"
@@ -120,3 +125,37 @@ def test_load_config_resets_bad_desktop_shortcut_seeded(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
     cfg = config.load_config()
     assert cfg["desktop_shortcut_seeded"] is False
+
+
+def test_v1_2_config_is_migrated(tmp_path, monkeypatch):
+    """Конфиг прежних версий: русское имя города, своя таймзона и единый
+    сдвиг offset_min (двигал утро и вечер в одну сторону) — последние два
+    ключа больше ничего не значат и выбрасываются."""
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({
+        "mode": "sun", "city": "Санкт-Петербург", "lat": 1.0, "lon": 2.0,
+        "tz": "Europe/Moscow", "offset_min": -40, "use_clouds": True,
+    }), encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    cfg = config.load_config()
+    assert cfg["city"] == "spb"
+    assert (cfg["lat"], cfg["lon"]) == config.CITIES["spb"]   # пресетные координаты
+    assert "tz" not in cfg and "offset_min" not in cfg
+    assert cfg["use_clouds"] is True
+    assert cfg["morning_elevation"] == config.DEFAULT_CONFIG["morning_elevation"]
+
+
+def test_unknown_legacy_city_keeps_own_coordinates(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({"city": "Простоквашино", "lat": 45.0, "lon": 40.0}),
+                        encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    cfg = config.load_config()
+    assert (cfg["city"], cfg["lat"], cfg["lon"]) == ("custom", 45.0, 40.0)
+
+
+def test_non_object_json_falls_back_to_defaults(tmp_path, monkeypatch):
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text("[1, 2, 3]", encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    assert config.load_config() == config.DEFAULT_CONFIG
