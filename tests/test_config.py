@@ -159,3 +159,15 @@ def test_non_object_json_falls_back_to_defaults(tmp_path, monkeypatch):
     cfg_file.write_text("[1, 2, 3]", encoding="utf-8")
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
     assert config.load_config() == config.DEFAULT_CONFIG
+
+
+def test_time_must_be_exactly_hh_mm(tmp_path, monkeypatch):
+    """fromisoformat принимает «07» и «07:00+03:00» — с ними расписание
+    падало бы на каждом тике, а поле ввода показывало бы мусор."""
+    cfg_file = tmp_path / "config.json"
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_file)
+    for bad in ("07", "7:00", "07:00:00", "07:00+03:00", "24:00"):
+        cfg_file.write_text(json.dumps({"light_time": bad}), encoding="utf-8")
+        assert config.load_config()["light_time"] == config.DEFAULT_CONFIG["light_time"], bad
+    cfg_file.write_text(json.dumps({"light_time": "06:45"}), encoding="utf-8")
+    assert config.load_config()["light_time"] == "06:45"

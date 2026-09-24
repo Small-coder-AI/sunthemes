@@ -353,6 +353,9 @@ class MainWindow(QWidget):
         self._loading = True
         self._minimize_hint_shown = False
         self._fit_pending = False
+        # До первой проверки по таймеру (при автозапуске — через 15 с) тема
+        # сама не меняется: ни от прихода прогноза, ни от пробуждения.
+        self._started = False
         self.cfg = config.load_config()
 
         self.setWindowTitle(APP_DISPLAY_NAME)
@@ -375,8 +378,12 @@ class MainWindow(QWidget):
         Задержка нужна при автозапуске: переключение темы, пока оболочка
         Windows ещё прогружается, чаще всего ловит глюк полуперекрашенного
         интерфейса."""
-        self.timer.start(TICK_MS)
-        QTimer.singleShot(initial_delay_ms, self.tick)
+        def first_tick():
+            self._started = True
+            self.tick()
+            self.timer.start(TICK_MS)
+
+        QTimer.singleShot(initial_delay_ms, first_tick)
 
     # ---------- построение UI ----------
     def _build_ui(self):
@@ -689,10 +696,11 @@ class MainWindow(QWidget):
 
     def tick(self, force: bool = False):
         """Проверка по расписанию. force — действие пользователя: применить
-        сразу, не дожидаясь окончания поэтапной записи прошлой смены."""
+        сразу, не дожидаясь старта и окончания поэтапной записи прошлой смены."""
         try:
             status = self._scheduler.evaluate(self.cfg)
-            if force or _time.monotonic() - self._last_set >= SETTLE_SEC:
+            settled = _time.monotonic() - self._last_set >= SETTLE_SEC
+            if force or (self._started and settled):
                 self._apply(status.theme)
             self._show_status(status)
             if self.isVisible():        # скрытому окну подсказка не нужна

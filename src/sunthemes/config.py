@@ -8,6 +8,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 from datetime import time as _time
 from pathlib import Path
 
@@ -97,6 +98,18 @@ def _is_number(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def _is_hhmm(v) -> bool:
+    """Ровно «ЧЧ:ММ»: fromisoformat принял бы и «07», и «07:00+03:00»,
+    а с таким временем расписание и поле ввода ломаются."""
+    if not isinstance(v, str) or not re.fullmatch(r"\d{2}:\d{2}", v):
+        return False
+    try:
+        _time.fromisoformat(v)
+    except ValueError:
+        return False
+    return True
+
+
 def _validated(cfg: dict) -> dict:
     """Каждое битое значение → дефолт поля + предупреждение в лог.
     Руками отредактированный config.json не должен ронять приложение."""
@@ -118,9 +131,7 @@ def _validated(cfg: dict) -> dict:
         if not _is_number(v) or not lo <= v <= hi:
             reset(key, f"must be a number in [{lo}, {hi}]")
     for key in ("light_time", "dark_time"):
-        try:
-            _time.fromisoformat(out.get(key))
-        except (TypeError, ValueError):
+        if not _is_hhmm(out.get(key)):
             reset(key, "must be HH:MM")
     v = out.get("clouds_max_offset_min")
     if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 720:

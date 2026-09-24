@@ -205,13 +205,19 @@ def clearness_anchors(
     return anchors
 
 
+# Дальше этого соседние точки kc не смешиваем (между ними ночь): вечерняя
+# облачность ничего не говорит об утренней.
+MAX_INTERPOLATION_GAP = timedelta(hours=3)
+
+
 def interpolator(anchors: list[tuple[datetime, float]]) -> Callable[[datetime], float] | None:
-    """kc(t): линейно между опорными точками, за краями — ближайшее значение.
-    None — если точек нет."""
+    """kc(t): линейно между соседними опорными точками; через ночной разрыв и
+    за краями — значение ближайшей точки. None — если точек нет."""
     if not anchors:
         return None
     ts = [t.timestamp() for t, _ in anchors]
     ks = [k for _, k in anchors]
+    max_gap = MAX_INTERPOLATION_GAP.total_seconds()
 
     def kc(when: datetime) -> float:
         x = when.timestamp()
@@ -220,7 +226,9 @@ def interpolator(anchors: list[tuple[datetime, float]]) -> Callable[[datetime], 
             return ks[0]
         if i == len(ts):
             return ks[-1]
-        frac = (x - ts[i - 1]) / (ts[i] - ts[i - 1])
-        return ks[i - 1] + (ks[i] - ks[i - 1]) * frac
+        t0, t1 = ts[i - 1], ts[i]
+        if t1 - t0 > max_gap:
+            return ks[i - 1] if x - t0 < t1 - x else ks[i]
+        return ks[i - 1] + (ks[i] - ks[i - 1]) * (x - t0) / (t1 - t0)
 
     return kc

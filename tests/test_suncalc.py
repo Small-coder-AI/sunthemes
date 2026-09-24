@@ -205,3 +205,11 @@ def test_interpolator_is_linear_inside_and_flat_outside():
     assert kc(t0 + timedelta(minutes=30)) == pytest.approx(0.4)
     assert kc(t0 + timedelta(hours=9)) == pytest.approx(0.6)
     assert suncalc.interpolator([]) is None
+
+
+def test_interpolator_does_not_blend_across_the_night():
+    evening = datetime(2026, 1, 1, 15, tzinfo=UTC)
+    morning = evening + timedelta(hours=16)
+    kc = suncalc.interpolator([(evening, 0.2), (morning, 0.9)])
+    assert kc(morning - timedelta(minutes=40)) == pytest.approx(0.9)
+    assert kc(evening + timedelta(hours=1)) == pytest.approx(0.2)

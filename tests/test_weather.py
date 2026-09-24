@@ -153,3 +153,24 @@ def test_cache_keeps_a_few_points_only():
         p.refresh(50 + i, 30)
     assert p.forecast(50, 30) is None                     # самая старая вытеснена
     assert p.forecast(50 + weather.WeatherProvider.MAX_POINTS + 2, 30) is not None
+
+
+def test_eviction_never_drops_points_being_loaded():
+    """Много точек подряд при медленной сети (колесо мыши по списку городов)
+    раньше роняло _claim с KeyError."""
+    release = threading.Event()
+    finished = threading.Semaphore(0)
+
+    def slow_fetch(url, timeout):
+        release.wait(5)
+        return api_response()
+
+    p = provider(slow_fetch)
+    p.on_update = finished.release
+    n = weather.WeatherProvider.MAX_POINTS + 2
+    for i in range(n):
+        assert p.refresh_in_background(50 + i, 30) is True
+    release.set()
+    for _ in range(n):
+        assert finished.acquire(timeout=5)
+    assert p.forecast(50 + n - 1, 30) is not None

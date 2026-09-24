@@ -55,8 +55,19 @@ class SunPreview:
 class _Manual:
     theme: str
     auto_theme: str               # авто-тема в момент выбора
-    until: datetime | None        # следующая авто-смена на момент выбора
+    until: datetime | None        # ближайшая авто-смена (уточняется по прогнозу)
     until_theme: str | None
+
+
+@dataclass
+class _Frozen:
+    """Что уже случилось в текущих солнечных сутках."""
+    key: tuple                    # настройки, при которых считали
+    noon: datetime
+    with_forecast: bool           # план учитывал прогноз
+    plan: DayPlan
+    light_at: datetime | None = None   # тема уже стала светлой в этот момент
+    dark_at: datetime | None = None    # после этого уже стала тёмной
 
 
 class ThemeScheduler:
@@ -69,7 +80,7 @@ class ThemeScheduler:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._plans: dict[tuple, DayPlan] = {}
         self._clearness: dict[tuple, object] = {}
-        self._current: tuple[tuple, DayPlan] | None = None   # (настройки, план)
+        self._frozen: _Frozen | None = None
         self._manual: _Manual | None = None
 
     # --- публичное API ---
@@ -91,9 +102,11 @@ class ThemeScheduler:
         ):
             log.info("Manual %s override ended — back to schedule", manual.theme)
             self._manual = manual = None
-        if manual is not None:
-            return Status(manual.theme, auto, True, manual.until, manual.until_theme)
         nxt = self._next_change(cfg, now, auto)
+        if manual is not None:
+            # Новый прогноз мог сдвинуть ближайшую смену — выбор держится до неё.
+            self._manual = manual = _Manual(manual.theme, auto, *(nxt or (None, None)))
+            return Status(manual.theme, auto, True, manual.until, manual.until_theme)
         return Status(auto, auto, False, *(nxt or (None, None)))
 
     def set_manual(self, theme: str, cfg: dict, now: datetime | None = None) -> None:
@@ -189,32 +202,43 @@ class ThemeScheduler:
                 cfg["clouds_max_offset_min"])
 
     def _current_plan(self, cfg: dict, now: datetime) -> DayPlan:
-        """План текущих суток с замороженными прошедшими границами.
+        """План текущих суток с замороженными прошедшими сменами.
 
         Уже случившееся переключение прогноз не отменяет: если утром тема
         стала светлой, новый прогноз «светлеет позже» её не вернёт; если
         вечером стала тёмной — «темнеет позже» не вернёт светлую. Будущие
-        границы по-прежнему следуют свежему прогнозу."""
+        границы по-прежнему следуют свежему прогнозу. Исключение — первый
+        прогноз после работы без него (сеть появилась позже старта): смена
+        по чистой астрономии была догадкой, её можно поправить."""
         noon = suncalc.solar_day_noon(cfg["lon"], now)
         fresh = self._plan(cfg, noon)
         key = self._settings_key(cfg)
-        plan = fresh
-        if self._current is not None:
-            old_key, old = self._current
-            if old_key == key and old.noon == noon and old.has_light:
-                light_from = old.light_from if old.light_from <= now else fresh.light_from
-                dark_from = old.dark_from if old.dark_from <= now else fresh.dark_from
-                plan = DayPlan(noon, light_from, max(light_from, dark_from))
-        self._current = (key, plan)
+        with_forecast = self._clearness_for(cfg, noon)[1] is not None
+        fr = self._frozen
+        if (fr is None or fr.key != key or fr.noon != noon
+                or (with_forecast and not fr.with_forecast)):
+            fr = _Frozen(key, noon, with_forecast, fresh)
+        fr.with_forecast = with_forecast
+
+        if fr.light_at is None:
+            plan = fresh
+        else:
+            dark_from = fr.dark_at or max(fresh.dark_from, fr.light_at)
+            plan = DayPlan(noon, fr.light_at, dark_from)
+        if fr.light_at is None and plan.has_light and plan.light_from <= now:
+            fr.light_at = plan.light_from
+        if fr.light_at is not None and fr.dark_at is None and plan.dark_from <= now:
+            fr.dark_at = plan.dark_from
+        fr.plan = plan
+        self._frozen = fr
         return plan
 
     def _plan_at(self, cfg: dict, when: datetime) -> DayPlan:
         """План суток, в которые попадает `when` (для текущих — замороженный)."""
         noon = suncalc.solar_day_noon(cfg["lon"], when)
-        if self._current is not None:
-            key, plan = self._current
-            if key == self._settings_key(cfg) and plan.noon == noon:
-                return plan
+        fr = self._frozen
+        if fr is not None and fr.key == self._settings_key(cfg) and fr.noon == noon:
+            return fr.plan
         return self._plan(cfg, noon)
 
     def _plan(self, cfg: dict, noon: datetime) -> DayPlan:

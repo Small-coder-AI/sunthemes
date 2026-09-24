@@ -213,3 +213,56 @@ def test_preview_reports_weather_state():
     assert (p.weather, p.cloud_cover) == ("ok", 90)
     assert p.plan.light_from > p.base.light_from and p.plan.dark_from < p.base.dark_from
     assert p.astro.light_from < p.base.light_from     # восход раньше порога 5°
+
+
+# --- регрессии по ревью ---
+
+def test_manual_choice_follows_a_switch_moved_by_new_forecast():
+    """Ручной выбор держится до АКТУАЛЬНОЙ смены: прогноз прояснился —
+    вечерняя смена сдвинулась позже, выбор не должен кончиться раньше неё."""
+    w = FakeWeather(make_forecast(*MOSCOW, DAY, kc=0.3))
+    s, cfg = scheduler(w), make_cfg(use_clouds=True)
+    s.set_manual(DARK, cfg, at("14:00"))
+    w.current = make_forecast(*MOSCOW, DAY, kc=1.0)
+    assert s.evaluate(cfg, at("15:00")).theme == DARK
+    st = s.evaluate(cfg, at("17:10"))          # по старому прогнозу смена была ~17:00
+    assert (st.theme, st.manual, st.auto_theme) == (DARK, True, LIGHT)
+
+
+def test_first_forecast_may_correct_a_guess_made_without_it():
+    """Сеть поднялась позже старта: светлая «по астрономии» — догадка,
+    первый прогноз её поправляет (а следующие уже нет)."""
+    w = FakeWeather(None, status="loading")
+    s, cfg = scheduler(w), make_cfg(use_clouds=True)
+    assert s.evaluate(cfg, at("07:05")).theme == LIGHT
+    w.current = make_forecast(*MOSCOW, DAY, kc=0.3)
+    assert s.evaluate(cfg, at("07:06")).theme == DARK
+
+
+def test_evening_stays_dark_after_window_collapsed(monkeypatch):
+    """Светлая включилась, затем прогноз «съел» окно целиком — тема
+    стала тёмной и больше не возвращается к светлой в эти сутки."""
+    s, cfg = scheduler(), make_cfg()
+    noon = suncalc.solar_day_noon(MOSCOW[1], at("12:00"))
+    minutes = lambda m: noon + timedelta(minutes=m)  # noqa: E731
+    plans = iter([
+        suncalc.DayPlan(noon, minutes(10), minutes(300)),   # светлая с N+10
+        suncalc.DayPlan.dark_all_day(noon),                  # окно исчезло
+        suncalc.DayPlan(noon, minutes(15), minutes(180)),   # снова «светло»
+    ])
+    current = {}
+
+    def fake_plan(cfg_, noon_):
+        if noon_ != noon:
+            return suncalc.DayPlan.dark_all_day(noon_)
+        if "plan" not in current or current.get("advance"):
+            current["plan"] = next(plans)
+            current["advance"] = False
+        return current["plan"]
+
+    monkeypatch.setattr(s, "_plan", fake_plan)
+    assert s.evaluate(cfg, minutes(20)).theme == LIGHT
+    current["advance"] = True
+    assert s.evaluate(cfg, minutes(21)).theme == DARK
+    current["advance"] = True
+    assert s.evaluate(cfg, minutes(22)).theme == DARK

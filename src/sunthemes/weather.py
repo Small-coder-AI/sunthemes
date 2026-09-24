@@ -182,13 +182,15 @@ class WeatherProvider:
         with self._lock:
             if not self._needs_refresh_locked(key):
                 return None
-            if key not in self._entries:
-                self._entries[key] = _Entry()
-                self._evict_locked()
-            self._entries[key].in_flight = True
+            # Переставить в конец: вытесняются давно не обновлявшиеся точки.
+            entry = self._entries.pop(key, None) or _Entry()
+            entry.in_flight = True
+            self._entries[key] = entry
+            self._evict_locked()
         return key
 
     def _evict_locked(self) -> None:
+        """Лишние точки — прочь, начиная со старых; загружаемые не трогаем."""
         for old in list(self._entries):
             if len(self._entries) <= self.MAX_POINTS:
                 break
