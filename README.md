@@ -79,7 +79,7 @@ uv tool upgrade sunthemes
 | Theme write | `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize` → `AppsUseLightTheme`, `SystemUsesLightTheme` |
 | Change notification | `SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, …, "ImmersiveColorSet", …)` — flags written one by one with a short pause and a repeated broadcast to minimize the half-repainted-shell glitch |
 | Sun height | [astral](https://github.com/sffjunkie/astral) from coordinates; light theme while the sun is above the threshold (separate for morning and evening) |
-| Real daylight | Open-Meteo hourly `shortwave_radiation` is an *average over the preceding hour*; it is turned into a clearness index against a clear-sky model (Haurwitz) averaged over the same hour. Clouds raise the threshold: light while "clearness × clear-sky radiation" stays above the clear-sky radiation at the threshold. Clouds only shorten the light window, by at most `clouds_max_offset_min` (120 min) on each side |
+| Real daylight | Open-Meteo hourly `shortwave_radiation` is an *average over the preceding hour*; it is turned into a clearness index against a clear-sky model (Haurwitz) averaged over the same hour. Clouds raise the threshold: light while "clearness × clear-sky radiation" stays above the clear-sky radiation at the threshold. Clouds only shorten the light window, by at most `clouds_max_offset_min` (120 min) on each side. If `api.open-meteo.com` is unreachable, the same forecast comes from Open-Meteo's Previous Runs API (another server) |
 | Stability | a switch that already happened is never undone by a newer forecast — no back-and-forth flicker |
 | Autostart | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
 

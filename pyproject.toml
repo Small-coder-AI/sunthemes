@@ -11,6 +11,7 @@ keywords = ["windows", "dark-mode", "theme", "sunrise", "sunset"]
 dependencies = [
     "PySide6>=6.6",
     "astral>=3.2",
+    "truststore>=0.10.4",
 ]
 
 [project.urls]

@@ -18,7 +18,7 @@ uv tool install git+https://github.com/Small-coder-AI/sunthemes   # боевая
 - `src/sunthemes/ui.py` — окно, трей, QSS; решения берёт у scheduler, тему пишет ТОЛЬКО через инжектированный theme_setter
 - `src/sunthemes/scheduler.py` — какая тема сейчас и когда следующая смена: режимы sun/time, ручной выбор до следующей смены, «заморозка» прошедших границ; без Qt, реестра и сети
 - `src/sunthemes/suncalc.py` — астрономия и модель света: порог высоты солнца (утро/вечер), солнечные сутки, индекс ясности из прогноза; чистые функции
-- `src/sunthemes/weather.py` — WeatherProvider Open-Meteo: кеш, backoff; сеть только в фоновом потоке
+- `src/sunthemes/weather.py` — WeatherProvider Open-Meteo: кеш, backoff, запасной адрес (Previous Runs API — тот же прогноз с другого IP, на случай блокировки основного), сертификаты через truststore (проверяет ОС — стандартный ssl спотыкается о просроченные промежуточные в хранилище Windows); сеть только в фоновом потоке
 - `src/sunthemes/winapi.py` — весь Windows API (реестр, broadcast, mutex, автозагрузка); без Qt и сети
 - `src/sunthemes/config.py` — конфиг, пресеты городов по id, миграция прежних версий
 - `src/sunthemes/i18n.py` — словарь строк RU/EN, tr()

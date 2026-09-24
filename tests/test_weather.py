@@ -1,4 +1,4 @@
-"""Тесты провайдера Open-Meteo: разбор ответа, кеш, backoff, приватность."""
+"""Тесты провайдера Open-Meteo: разбор ответа, кеш, backoff, запасной адрес, приватность."""
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -109,7 +109,7 @@ def test_successful_fetch_is_cached_for_30_minutes():
 
 def test_failure_after_success_keeps_old_forecast():
     clock = FakeClock()
-    responses = [api_response(), OSError("down")]
+    responses = [api_response(), OSError("down"), OSError("down")]   # потом лежат оба адреса
 
     def fetch(url, timeout):
         r = responses.pop(0)
@@ -122,6 +122,45 @@ def test_failure_after_success_keeps_old_forecast():
     clock.now += 31 * 60
     p.refresh(55.8, 37.6)
     assert p.forecast(55.8, 37.6) is not None        # устаревший, но лучше чем ничего
+
+
+# --- запасной адрес ---
+
+def blocked(*hosts):
+    """fetch_json, для которого адреса `hosts` недоступны; плюс журнал вызовов."""
+    calls = []
+
+    def fetch(url, timeout):
+        calls.append(url.split("?")[0])
+        if any(url.startswith(h) for h in hosts):
+            raise OSError("connection reset")
+        return api_response()
+    return fetch, calls
+
+
+def test_mirror_serves_forecast_while_primary_is_blocked():
+    clock = FakeClock()
+    primary, mirror = weather.API_URLS
+    fetch, calls = blocked(primary)
+    p = provider(fetch, clock)
+    p.refresh(55.8, 37.6)
+    assert p.status(55.8, 37.6) == "ok"
+    assert calls == [primary, mirror]
+    # следующий запрос — сразу на ответивший адрес, заблокированный не ждём
+    calls.clear()
+    clock.now += 31 * 60
+    p.refresh(55.8, 37.6)
+    assert calls == [mirror]
+
+
+def test_all_hosts_down_logs_every_error(caplog):
+    fetch, calls = blocked(*weather.API_URLS)
+    p = provider(fetch)
+    p.refresh(55.8, 37.6)
+    assert p.status(55.8, 37.6) == "failed"
+    assert calls == list(weather.API_URLS)
+    assert "api.open-meteo.com: connection reset" in caplog.text
+    assert "previous-runs-api.open-meteo.com: connection reset" in caplog.text
 
 
 def test_status_is_loading_while_request_in_flight():

@@ -5,23 +5,40 @@
   (refresh_in_background); остальные методы работают по кешу и никогда
   не блокируются.
 - Неудачный запрос запоминается: повтор не раньше чем через 5 минут.
+- Адресов два (API_URLS); запрос идёт сначала на тот, что ответил последним.
+- HTTPS — только через _SSL_CONTEXT (сертификаты проверяет ОС).
 - Приватность: координаты в URL округляются до 1 знака (~10 км) —
   точная геолокация в сеть не уходит; на расчёт света это не влияет.
 """
 
 import json
 import logging
+import ssl
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import urlopen
+
+import truststore
 
 log = logging.getLogger("sunthemes")
 
-API_URL = "https://api.open-meteo.com/v1/forecast"
+# Сертификаты проверяет сама ОС, как браузер. Стандартный ssl Python на Windows
+# берёт промежуточные сертификаты из хранилища как доверенные и спотыкается
+# о просроченные: старый кросс-сертификат ISRG Root X2 давал «certificate has
+# expired» там, где браузер и curl строят другую, живую цепочку.
+_SSL_CONTEXT = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+# Основной адрес и запасной. Previous Runs API отдаёт тот же прогноз
+# (текущий прогон моделей) в том же формате, но стоит на другом IP —
+# выручает, когда провайдер блокирует адрес основного API.
+API_URLS = (
+    "https://api.open-meteo.com/v1/forecast",
+    "https://previous-runs-api.open-meteo.com/v1/forecast",
+)
 UTC = timezone.utc
 HOUR = timedelta(hours=1)
 
@@ -69,7 +86,7 @@ def parse_forecast(data: dict) -> Forecast:
 
 
 def _fetch_json(url: str, timeout: float) -> dict:
-    with urlopen(url, timeout=timeout) as r:
+    with urlopen(url, timeout=timeout, context=_SSL_CONTEXT) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
@@ -101,6 +118,7 @@ class WeatherProvider:
         self._clock = clock
         self._lock = threading.Lock()
         self._entries: dict[tuple[float, float], _Entry] = {}
+        self._host = 0                   # индекс в API_URLS: кто ответил последним
         self.on_update: Callable[[], None] | None = None
 
     @staticmethod
@@ -109,9 +127,9 @@ class WeatherProvider:
         return round(lat, 1), round(lon, 1)
 
     @classmethod
-    def url(cls, lat: float, lon: float) -> str:
+    def url(cls, lat: float, lon: float, base: str = API_URLS[0]) -> str:
         p_lat, p_lon = cls.point(lat, lon)
-        return API_URL + "?" + urlencode({
+        return base + "?" + urlencode({
             "latitude": p_lat,
             "longitude": p_lon,
             "hourly": "shortwave_radiation,cloud_cover",
@@ -197,9 +215,30 @@ class WeatherProvider:
             if not self._entries[old].in_flight:
                 del self._entries[old]
 
+    def _fetch(self, key: tuple[float, float]) -> Forecast:
+        """Прогноз с первого ответившего адреса. Начинаем с того, что ответил
+        прошлый раз: заблокированный адрес не тормозит каждое обновление.
+        Не ответил ни один — RuntimeError с ошибками всех адресов."""
+        first = self._host
+        errors = []
+        for i in range(len(API_URLS)):
+            host = (first + i) % len(API_URLS)
+            base = API_URLS[host]
+            try:
+                forecast = parse_forecast(
+                    self._fetch_json(self.url(*key, base), self.TIMEOUT_SEC))
+            except (OSError, ValueError) as e:     # сеть, TLS, HTTP / битый ответ
+                errors.append(f"{urlsplit(base).hostname}: {e}")
+                continue
+            if host != self._host:
+                self._host = host
+                log.info("Open-Meteo: switched to %s", urlsplit(base).hostname)
+            return forecast
+        raise RuntimeError("; ".join(errors))
+
     def _run(self, key: tuple[float, float]) -> None:
         try:
-            forecast = parse_forecast(self._fetch_json(self.url(*key), self.TIMEOUT_SEC))
+            forecast = self._fetch(key)
         except Exception as e:
             with self._lock:
                 entry = self._entries.setdefault(key, _Entry())
