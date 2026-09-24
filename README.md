@@ -1,24 +1,29 @@
 # Sunthemes
 
-Automatic Windows light/dark theme switching — by sunrise and sunset,
-or on a fixed schedule. Optionally follows *actual* daylight using
-cloud-cover and solar-radiation data, so a gloomy afternoon can switch
-you to dark mode before the astronomical sunset.
+Automatic Windows light/dark theme switching — by the sun's height above
+the horizon, or on a fixed schedule. Optionally follows *actual* daylight
+from a cloud forecast, so on a gloomy day dark mode comes earlier in the
+evening and light mode later in the morning.
 
 [Русская версия](README.ru.md)
 
 ## Features
 
-- **Sun mode** — computes sunrise/sunset for your location (city preset
-  or custom coordinates) and switches the Windows theme accordingly,
-  with an optional ±N minutes offset.
-- **Real daylight mode** — hourly solar radiation from
-  [Open-Meteo](https://open-meteo.com/) (no API key): the theme follows
-  when it actually gets dark, not when the almanac says so.
-- **Schedule mode** — plain fixed times for light and dark.
+- **Sun mode** — light theme while the sun is above a threshold height
+  (city preset or custom coordinates). Morning and evening thresholds are
+  separate; the default 5° is roughly 40–60 minutes after sunrise and
+  before sunset at Moscow's latitude, when a room is actually lit. Polar
+  day and night just work.
+- **Cloud awareness** — hourly solar radiation forecast from
+  [Open-Meteo](https://open-meteo.com/) (no API key): clouds raise the
+  threshold, so the theme follows when it actually gets dark, not when
+  the almanac says so.
+- **Schedule mode** — plain fixed times for light and dark (Windows clock).
+- The window shows today's sunrise/sunset and when the theme will switch.
 - Sits in the system tray, checks once a minute, re-checks immediately
   after wake-from-sleep.
-- Manual ☀ / 🌙 override buttons.
+- Manual ☀ / 🌙 buttons: the choice holds until the next scheduled switch
+  (resume auto earlier via the link in the window or the tray menu).
 - Autostart with Windows (minimized to tray).
 - Start Menu shortcut is created on first run; desktop shortcut is
   an opt-in checkbox in settings.
@@ -73,12 +78,20 @@ uv tool upgrade sunthemes
 |---|---|
 | Theme write | `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize` → `AppsUseLightTheme`, `SystemUsesLightTheme` |
 | Change notification | `SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, …, "ImmersiveColorSet", …)` — flags written one by one with a short pause and a repeated broadcast to minimize the half-repainted-shell glitch |
-| Sunrise/sunset | [astral](https://github.com/sffjunkie/astral) from coordinates and timezone |
-| Real daylight | Open-Meteo hourly `shortwave_radiation`; the switch happens when radiation crosses ~50 W/m² (civil twilight), linearly interpolated between hours |
+| Sun height | [astral](https://github.com/sffjunkie/astral) from coordinates; light theme while the sun is above the threshold (separate for morning and evening) |
+| Real daylight | Open-Meteo hourly `shortwave_radiation` is an *average over the preceding hour*; it is turned into a clearness index against a clear-sky model (Haurwitz) averaged over the same hour. Clouds raise the threshold: light while "clearness × clear-sky radiation" stays above the clear-sky radiation at the threshold. Clouds only shorten the light window, by at most `clouds_max_offset_min` (120 min) on each side. If `api.open-meteo.com` is unreachable, the same forecast comes from Open-Meteo's Previous Runs API (another server) |
+| Stability | a switch that already happened is never undone by a newer forecast — no back-and-forth flicker |
 | Autostart | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` |
 
 Config and log live in `%USERPROFILE%\.theme_switcher\`
-(`config.json`, `theme_switcher.log`).
+(`config.json`, `theme_switcher.log`). Config-only setting:
+`clouds_max_offset_min` — how many minutes clouds may shift a switch.
+
+**Upgrading from 1.2.x.** The single "±N minutes" offset moved morning and
+evening in the same direction, so making the evening earlier also made
+the morning earlier. It is replaced by sun-height thresholds; the old
+offset is reset, and the new defaults already move the evening earlier
+and the morning later.
 
 ## Troubleshooting
 

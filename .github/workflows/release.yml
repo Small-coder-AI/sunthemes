@@ -19,6 +19,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
+      - name: Run tests
+        run: uv run pytest -q
+
       - name: Verify tag matches package version
         shell: pwsh
         run: |

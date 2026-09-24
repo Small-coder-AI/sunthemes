@@ -7,9 +7,10 @@ ThemeSwitcher — совместимость со старыми установ�
 import json
 import logging
 import logging.handlers
+import os
+import re
 from datetime import time as _time
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 APP_NAME = "ThemeSwitcher"          # ключ в HKCU\...\Run — не менять
 APP_DIR = Path.home() / ".theme_switcher"
@@ -36,19 +37,20 @@ def setup_logging() -> logging.handlers.RotatingFileHandler:
     root.addHandler(handler)
     return handler
 
-# Пресеты городов: id → (широта, долгота, IANA-таймзона).
+
+# Пресеты городов: id → (широта, долгота).
 # Отображаемые названия — в i18n по ключу "city.<id>".
-CITIES: dict[str, tuple[float, float, str]] = {
-    "moscow":        (55.7558, 37.6173, "Europe/Moscow"),
-    "spb":           (59.9311, 30.3609, "Europe/Moscow"),
-    "yekaterinburg": (56.8389, 60.6057, "Asia/Yekaterinburg"),
-    "novosibirsk":   (55.0084, 82.9357, "Asia/Novosibirsk"),
-    "kaliningrad":   (54.7104, 20.4522, "Europe/Kaliningrad"),
-    "london":        (51.5074, -0.1278, "Europe/London"),
-    "berlin":        (52.5200, 13.4050, "Europe/Berlin"),
-    "paris":         (48.8566, 2.3522,  "Europe/Paris"),
-    "newyork":       (40.7128, -74.0060, "America/New_York"),
-    "tokyo":         (35.6762, 139.6503, "Asia/Tokyo"),
+CITIES: dict[str, tuple[float, float]] = {
+    "moscow":        (55.7558, 37.6173),
+    "spb":           (59.9311, 30.3609),
+    "yekaterinburg": (56.8389, 60.6057),
+    "novosibirsk":   (55.0084, 82.9357),
+    "kaliningrad":   (54.7104, 20.4522),
+    "london":        (51.5074, -0.1278),
+    "berlin":        (52.5200, 13.4050),
+    "paris":         (48.8566, 2.3522),
+    "newyork":       (40.7128, -74.0060),
+    "tokyo":         (35.6762, 139.6503),
 }
 
 # Старые конфиги хранили русское название города — маппинг на новые id.
@@ -60,17 +62,29 @@ LEGACY_CITY_NAMES: dict[str, str] = {
     "Калининград": "kaliningrad",
 }
 
+# Ключи прежних версий, которые больше ничего не значат:
+# tz — время теперь системное (как на часах Windows); offset_min — единый
+# сдвиг, двигавший утро и вечер в одну сторону, заменён порогами высоты
+# солнца (morning_elevation / evening_elevation).
+OBSOLETE_KEYS = ("tz", "offset_min")
+
+# Допустимый диапазон порогов высоты солнца, градусы.
+ELEVATION_MIN, ELEVATION_MAX = -6, 20
+
 DEFAULT_CONFIG: dict = {
     "mode": "sun",            # "sun" | "time"
     "city": "moscow",         # id из CITIES или "custom"
     "lat": 55.7558,
     "lon": 37.6173,
-    "tz": "Europe/Moscow",
-    "offset_min": 0,          # сдвиг от восхода/заката, минуты
+    # Светлая утром — когда солнце поднимется выше, тёмная вечером — когда
+    # опустится ниже этой высоты, градусы. 0° ≈ восход/закат; 5° — примерно
+    # 40–60 мин от восхода/заката на широте Москвы: в комнате уже/ещё светло.
+    "morning_elevation": 5,
+    "evening_elevation": 5,
     "light_time": "07:00",
     "dark_time": "19:00",
     "use_clouds": False,      # учитывать реальную освещённость (Open-Meteo)
-    "clouds_max_offset_min": 120,  # предел отклонения от астрономии, минуты
+    "clouds_max_offset_min": 120,  # на сколько облака могут сдвинуть смену, мин
     # Ярлык в меню «Пуск» создаётся один раз; если пользователь удалил его —
     # не навязываем повторно (маркер «уже создавали»).
     "start_menu_shortcut_seeded": False,
@@ -78,6 +92,22 @@ DEFAULT_CONFIG: dict = {
     # пользователем не навязываем повторно (маркер «уже создавали»).
     "desktop_shortcut_seeded": False,
 }
+
+
+def _is_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _is_hhmm(v) -> bool:
+    """Ровно «ЧЧ:ММ»: fromisoformat принял бы и «07», и «07:00+03:00»,
+    а с таким временем расписание и поле ввода ломаются."""
+    if not isinstance(v, str) or not re.fullmatch(r"\d{2}:\d{2}", v):
+        return False
+    try:
+        _time.fromisoformat(v)
+    except ValueError:
+        return False
+    return True
 
 
 def _validated(cfg: dict) -> dict:
@@ -94,25 +124,18 @@ def _validated(cfg: dict) -> dict:
         reset("mode", "must be 'sun' or 'time'")
     if not isinstance(out.get("city"), str):
         reset("city", "must be a string")
-    for key, lo, hi in (("lat", -90.0, 90.0), ("lon", -180.0, 180.0)):
+    for key, lo, hi in (("lat", -90, 90), ("lon", -180, 180),
+                        ("morning_elevation", ELEVATION_MIN, ELEVATION_MAX),
+                        ("evening_elevation", ELEVATION_MIN, ELEVATION_MAX)):
         v = out.get(key)
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+        if not _is_number(v) or not lo <= v <= hi:
             reset(key, f"must be a number in [{lo}, {hi}]")
-    try:
-        ZoneInfo(str(out.get("tz")))
-    except Exception:
-        reset("tz", "unknown IANA timezone")
     for key in ("light_time", "dark_time"):
-        v = out.get(key)
-        try:
-            _time.fromisoformat(v)
-        except (TypeError, ValueError):
+        if not _is_hhmm(out.get(key)):
             reset(key, "must be HH:MM")
-    for key, lo, hi in (("offset_min", -720, 720),
-                        ("clouds_max_offset_min", 0, 720)):
-        v = out.get(key)
-        if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
-            reset(key, f"must be an integer in [{lo}, {hi}]")
+    v = out.get("clouds_max_offset_min")
+    if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 720:
+        reset("clouds_max_offset_min", "must be an integer in [0, 720]")
     for key in ("use_clouds", "start_menu_shortcut_seeded",
                 "desktop_shortcut_seeded"):
         if not isinstance(out.get(key), bool):
@@ -124,7 +147,7 @@ def resolve_city_id(cfg: dict) -> str:
     """id города для конфига: новый id, legacy-имя или 'custom'.
 
     Неизвестное название (в т.ч. отсутствующее) трактуем как свои
-    координаты — lat/lon/tz пользователя при этом сохраняются как есть.
+    координаты — lat/lon пользователя при этом сохраняются как есть.
     """
     raw = cfg.get("city", "")
     if raw in CITIES:
@@ -132,14 +155,36 @@ def resolve_city_id(cfg: dict) -> str:
     return LEGACY_CITY_NAMES.get(raw, "custom")
 
 
+def _migrated(cfg: dict) -> dict:
+    """Приведение конфига прежних версий к текущему виду."""
+    out = {k: v for k, v in cfg.items() if k not in OBSOLETE_KEYS}
+    out["city"] = resolve_city_id(out)
+    if out["city"] in CITIES:
+        # Для пресета координаты — всегда пресетные: что видно в окне,
+        # по тому и считаем.
+        out["lat"], out["lon"] = CITIES[out["city"]]
+    return out
+
+
 def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if CONFIG_PATH.exists():
         try:
-            cfg.update(json.loads(CONFIG_PATH.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError) as e:
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("top level must be an object")
+            cfg.update(data)
+        except (ValueError, OSError) as e:
             log.warning("Cannot read config: %s. Using defaults.", e)
-    return _validated(cfg)
+    return _migrated(_validated(cfg))
+
+
+def save_config(cfg: dict) -> None:
+    """Атомарная запись: сбой посреди записи не оставит битый config.json."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, CONFIG_PATH)
 
 
 def ensure_app_icon() -> Path | None:
@@ -157,10 +202,3 @@ def ensure_app_icon() -> Path | None:
     except OSError as e:
         log.warning("Cannot copy app icon: %s", e)
         return None
-
-
-def save_config(cfg: dict) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(
-        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
